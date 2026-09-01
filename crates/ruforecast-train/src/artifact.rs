@@ -21,7 +21,7 @@ use thiserror::Error;
 use crate::config::{DatasetInput, JobId, RelativeDataPath, Sha256Digest};
 
 /// Maximum size of any emitted model record.
-pub const MAX_MODEL_ARTIFACT_BYTES: u64 = ruview_forecast_model::MAX_ARTIFACT_BYTES as u64;
+pub const MAX_MODEL_ARTIFACT_BYTES: u64 = ruforecast_model::MAX_ARTIFACT_BYTES as u64;
 /// Maximum size of a manifest or receipt.
 pub const MAX_METADATA_ARTIFACT_BYTES: u64 = 1024 * 1024;
 /// Fixed provider-side prefix. Descriptors never carry arbitrary filesystem
@@ -652,7 +652,7 @@ mod tests {
             sha256: Sha256Digest::of_bytes(bytes),
             window_count: 1,
             variates: 1,
-            feature_schema_digest: ruview_forecast_core::CanonicalDigest::of_bytes(
+            feature_schema_digest: ruforecast_core::CanonicalDigest::of_bytes(
                 b"test-feature-schema-v1",
                 b"value",
             ),
@@ -727,7 +727,7 @@ mod tests {
                 sha256: Sha256Digest::of_bytes(b"not training data"),
                 window_count: 1,
                 variates: 1,
-                feature_schema_digest: ruview_forecast_core::CanonicalDigest::of_bytes(
+                feature_schema_digest: ruforecast_core::CanonicalDigest::of_bytes(
                     b"test-feature-schema-v1",
                     b"value",
                 ),

@@ -2,8 +2,8 @@
 
 use std::io::{self, BufRead, BufReader, Read, Seek};
 
-use ruview_forecast_core::{SeriesKey, TrainSpec};
-use ruview_forecast_model::ForecastModelConfig;
+use ruforecast_core::{SeriesKey, TrainSpec};
+use ruforecast_model::ForecastModelConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;

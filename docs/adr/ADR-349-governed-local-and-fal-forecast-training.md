@@ -51,14 +51,14 @@ authority, make cost difficult to bound, and weaken cancellation. Sending a
 general local request to fal would also expose governance and customer
 identifiers that the hosted smoke path does not need.
 
-The initial `ruview-forecast-train` crate already separates three relevant
+The initial `ruforecast-train` crate already separates three relevant
 modules:
 
 | Module | Current contract |
 |---|---|
-| [`config.rs`](../../v2/crates/ruview-forecast-train/src/config.rs) | `TrainingRequest`, `ValidatedTrainingRequest`, bounded `JobId`, root-relative dataset path, exact size/SHA-256, named model profiles, typed CPU/CUDA choice, and bounded optimizer values; unknown fields are denied |
-| [`artifact.rs`](../../v2/crates/ruview-forecast-train/src/artifact.rs) | verified open dataset handle, root confinement, fixed `Model`/`Manifest`/`Receipt`/`Checkpoint` kinds, atomic writes, content descriptors, and conflict-on-different-bytes idempotency |
-| [`cancel.rs`](../../v2/crates/ruview-forecast-train/src/cancel.rs) | `Cancellation`, `CancelToken`, and cooperative cancellation checks for batch/checkpoint boundaries |
+| [`config.rs`](../../v2/crates/ruforecast-train/src/config.rs) | `TrainingRequest`, `ValidatedTrainingRequest`, bounded `JobId`, root-relative dataset path, exact size/SHA-256, named model profiles, typed CPU/CUDA choice, and bounded optimizer values; unknown fields are denied |
+| [`artifact.rs`](../../v2/crates/ruforecast-train/src/artifact.rs) | verified open dataset handle, root confinement, fixed `Model`/`Manifest`/`Receipt`/`Checkpoint` kinds, atomic writes, content descriptors, and conflict-on-different-bytes idempotency |
+| [`cancel.rs`](../../v2/crates/ruforecast-train/src/cancel.rs) | `Cancellation`, `CancelToken`, and cooperative cancellation checks for batch/checkpoint boundaries |
 
 The training crate features keep `cli`, `server`, `fal-client`, `cpu`, and
 `cuda` explicit, with default features empty. WGPU remains a model-crate
@@ -226,6 +226,6 @@ training environment.
 
 - [ADR-348](./ADR-348-independent-rust-multivariate-forecasting.md)
 - [RuView Forecast clean-room protocol](../security/ruview-forecast-clean-room.md)
-- [`ruview-forecast-train` manifest](../../v2/crates/ruview-forecast-train/Cargo.toml)
-- [`ruview-forecast-core` receipts](../../v2/crates/ruview-forecast-core/src/receipt.rs)
-- [`ruview-forecast-model` public artifact boundary](../../v2/crates/ruview-forecast-model/src/lib.rs)
+- [`ruforecast-train` manifest](../../v2/crates/ruforecast-train/Cargo.toml)
+- [`ruforecast-core` receipts](../../v2/crates/ruforecast-core/src/receipt.rs)
+- [`ruforecast-model` public artifact boundary](../../v2/crates/ruforecast-model/src/lib.rs)

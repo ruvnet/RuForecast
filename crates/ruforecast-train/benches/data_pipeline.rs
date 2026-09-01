@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ruview_forecast_core::SeriesKey;
-use ruview_forecast_train::corpus::JsonlWindow;
+use ruforecast_core::SeriesKey;
+use ruforecast_train::corpus::JsonlWindow;
 
 fn fixture() -> Vec<u8> {
     let context = 64usize;

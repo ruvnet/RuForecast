@@ -14,7 +14,7 @@ use ruvector_core::{
     types::{DbOptions, DistanceMetric, HnswConfig, SearchQuery, VectorEntry},
     VectorDB,
 };
-use ruview_forecast_core::{
+use ruforecast_core::{
     AnalogMatch, AnalogQuery, AnalogRetriever, CanonicalDigest, ForecastError, RetrievalScope,
     MAX_ANALOG_DIMENSION, MAX_ANALOG_K, MAX_SERIES_VALUES,
 };
@@ -118,7 +118,7 @@ impl PrivateStorage {
 /// One bounded in-memory HNSW index permanently bound to a privacy/split scope.
 ///
 /// The service must derive `scope` from its authenticated principal and a
-/// validated [`ruview_forecast_core::DataPolicy`], never from request-body
+/// validated [`ruforecast_core::DataPolicy`], never from request-body
 /// identifiers. A distinct value is required for every tenant/account/
 /// workspace/split. The dependency is compiled with its memory-only backend.
 /// A private temporary directory and empty mode-0600 probe file are retained so
@@ -627,7 +627,7 @@ fn validate_record_id(record_id: &str) -> Result<(), ForecastError> {
 mod tests {
     use std::io::Write;
 
-    use ruview_forecast_core::{AnalogRetriever, DataPolicy, PrivacyClass};
+    use ruforecast_core::{AnalogRetriever, DataPolicy, PrivacyClass};
 
     use super::*;
 

@@ -2,12 +2,12 @@
 
 use std::io::Write;
 
-use ruview_forecast_core::{
+use ruforecast_core::{
     CanonicalDigest, DataPolicy, HoldoutKey, NormalizationPolicy, PrivacyClass, QuantileSet,
     SeriesKey, SplitMember, SplitStrategy, TemporalSplitPlan, TimeRange, TrainSpec,
 };
-use ruview_forecast_model::ForecastModelConfig;
-use ruview_forecast_train::{
+use ruforecast_model::ForecastModelConfig;
+use ruforecast_train::{
     artifact::ArtifactStore,
     cancel::NeverCancel,
     config::{

@@ -3,9 +3,9 @@
 use std::io::Write as _;
 use std::process::Command;
 
-use ruview_forecast_core::SeriesKey;
-use ruview_forecast_model::ForecastModelConfig;
-use ruview_forecast_train::corpus::JsonlWindow;
+use ruforecast_core::SeriesKey;
+use ruforecast_model::ForecastModelConfig;
+use ruforecast_train::corpus::JsonlWindow;
 
 /// Deterministic synthetic values, distinct from the `smoke` command's own
 /// generator so the held-out windows are not simply repeats of training data.

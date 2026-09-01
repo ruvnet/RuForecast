@@ -18,25 +18,25 @@ The feature-off contract remains on the workspace Rust 1.89 line:
 
 ```bash
 cd v2
-cargo +1.89.0 test --locked -p ruview-forecast-core --no-default-features --lib --tests
-cargo +1.89.0 test --locked -p ruview-forecast-model --no-default-features --lib --tests
-cargo +1.89.0 check --locked -p ruview-forecast-model -p ruview-forecast-train --no-default-features --all-targets
-cargo +1.89.0 test --locked -p ruview-forecast-model --no-default-features --features ruvector --lib --tests
-cargo +1.89.0 clippy --locked -p ruview-forecast-core -p ruview-forecast-model -p ruview-forecast-train --no-default-features --all-targets -- -D warnings
-cargo +1.89.0 clippy --locked -p ruview-forecast-model --no-default-features --features ruvector --all-targets -- -D warnings
+cargo +1.89.0 test --locked -p ruforecast-core --no-default-features --lib --tests
+cargo +1.89.0 test --locked -p ruforecast-model --no-default-features --lib --tests
+cargo +1.89.0 check --locked -p ruforecast-model -p ruforecast-train --no-default-features --all-targets
+cargo +1.89.0 test --locked -p ruforecast-model --no-default-features --features ruvector --lib --tests
+cargo +1.89.0 clippy --locked -p ruforecast-core -p ruforecast-model -p ruforecast-train --no-default-features --all-targets -- -D warnings
+cargo +1.89.0 clippy --locked -p ruforecast-model --no-default-features --features ruvector --all-targets -- -D warnings
 ```
 
 Burn 0.21 CPU activation uses the explicitly separate Rust 1.92 line:
 
 ```bash
 cd v2
-cargo +1.92.0 test --locked -p ruview-forecast-model --no-default-features --features cpu --lib --tests
-cargo +1.92.0 test --locked -p ruview-forecast-train --no-default-features --features cpu,cli --lib --bins
-cargo +1.92.0 test --locked -p ruview-forecast-train --no-default-features --features cpu --test local_jsonl_smoke -- --exact local_hash_addressed_jsonl_executes_one_real_optimizer_step
-cargo +1.92.0 test --locked -p ruview-forecast-train --no-default-features --features cpu,cli --test cli_smoke -- --exact cli_smoke_trains_and_writes_the_complete_candidate_set
-cargo +1.92.0 test --locked -p ruview-forecast-train --no-default-features --features cpu,cli,server,fal-client --lib --bins
-cargo +1.92.0 clippy --locked -p ruview-forecast-model --no-default-features --features cpu --all-targets -- -D warnings
-cargo +1.92.0 clippy --locked -p ruview-forecast-train --no-default-features --features cpu,cli,server,fal-client --all-targets -- -D warnings
+cargo +1.92.0 test --locked -p ruforecast-model --no-default-features --features cpu --lib --tests
+cargo +1.92.0 test --locked -p ruforecast-train --no-default-features --features cpu,cli --lib --bins
+cargo +1.92.0 test --locked -p ruforecast-train --no-default-features --features cpu --test local_jsonl_smoke -- --exact local_hash_addressed_jsonl_executes_one_real_optimizer_step
+cargo +1.92.0 test --locked -p ruforecast-train --no-default-features --features cpu,cli --test cli_smoke -- --exact cli_smoke_trains_and_writes_the_complete_candidate_set
+cargo +1.92.0 test --locked -p ruforecast-train --no-default-features --features cpu,cli,server,fal-client --lib --bins
+cargo +1.92.0 clippy --locked -p ruforecast-model --no-default-features --features cpu --all-targets -- -D warnings
+cargo +1.92.0 clippy --locked -p ruforecast-train --no-default-features --features cpu,cli,server,fal-client --all-targets -- -D warnings
 ```
 
 The CUDA line is compile-only. It proves that the explicitly gated types build
@@ -45,8 +45,8 @@ claim:
 
 ```bash
 cd v2
-cargo +1.92.0 check --locked -p ruview-forecast-model --no-default-features --features cuda --lib
-cargo +1.92.0 check --locked -p ruview-forecast-train --no-default-features --features cuda,cli,server --lib --bins
+cargo +1.92.0 check --locked -p ruforecast-model --no-default-features --features cuda --lib
+cargo +1.92.0 check --locked -p ruforecast-train --no-default-features --features cuda,cli,server --lib --bins
 ```
 
 The hosted boundary stays backend-free and is exercised on Rust 1.89 with no
@@ -55,11 +55,11 @@ not authorize network use or a hosted training run:
 
 ```bash
 cd v2
-cargo +1.89.0 tree --locked -e normal,build -p ruview-forecast-train --no-default-features --features cli,server,fal-client > forecast-hosted-feature-tree.txt
+cargo +1.89.0 tree --locked -e normal,build -p ruforecast-train --no-default-features --features cli,server,fal-client > forecast-hosted-feature-tree.txt
 ! grep -Eiq '(^|[[:space:]])(burn|cubecl)(-|[[:space:]])' forecast-hosted-feature-tree.txt
-FAL_KEY='' cargo +1.89.0 test --locked -p ruview-forecast-train --no-default-features --features cli,server,fal-client --lib --bins --tests
-FAL_KEY='' cargo +1.89.0 test --locked -p ruview-forecast-train --no-default-features --features cli,server,fal-client privacy_external_dataset_payload_is_denied
-FAL_KEY='' cargo +1.89.0 clippy --locked -p ruview-forecast-train --no-default-features --features cli,server,fal-client --all-targets -- -D warnings
+FAL_KEY='' cargo +1.89.0 test --locked -p ruforecast-train --no-default-features --features cli,server,fal-client --lib --bins --tests
+FAL_KEY='' cargo +1.89.0 test --locked -p ruforecast-train --no-default-features --features cli,server,fal-client privacy_external_dataset_payload_is_denied
+FAL_KEY='' cargo +1.89.0 clippy --locked -p ruforecast-train --no-default-features --features cli,server,fal-client --all-targets -- -D warnings
 ```
 
 The broader repository gate remains:

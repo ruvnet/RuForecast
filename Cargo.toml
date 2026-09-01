@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ruforecast-core",
+    "crates/ruforecast-model",
+    "crates/ruforecast-train",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["rUv <ruv@ruv.net>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ruvnet/RuForecast"
+documentation = "https://docs.rs/ruforecast-core"
+keywords = ["forecasting", "time-series", "machine-learning", "quantile-regression", "privacy"]
+categories = ["science", "algorithms"]
+
+[workspace.dependencies]
+thiserror = "2.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+burn-core = { version = "0.21", default-features = false, features = ["std"] }
+burn-nn = { version = "0.21", default-features = false }
+burn-ndarray = { version = "0.21", default-features = false, features = ["std"] }
+burn-wgpu = { version = "0.21", default-features = false, features = ["std"] }
+burn-cuda = { version = "0.21", default-features = false, features = ["std"] }
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = { version = "0.4", features = ["full"] }
+sha2 = "0.10"
+ed25519-dalek = "2.1"
+clap = { version = "4.4", features = ["derive", "env"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+ruforecast-core = { version = "0.1.0", path = "crates/ruforecast-core" }
+ruforecast-model = { version = "0.1.0", path = "crates/ruforecast-model" }

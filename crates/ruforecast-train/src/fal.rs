@@ -4,7 +4,7 @@ use reqwest::{
     header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     Client, Request, StatusCode,
 };
-use ruview_forecast_core::{CanonicalDigest, TrainSpec};
+use ruforecast_core::{CanonicalDigest, TrainSpec};
 use serde::{
     de::{DeserializeOwned, Error as _, IgnoredAny},
     Deserialize, Deserializer, Serialize,
@@ -341,7 +341,7 @@ impl HostedSyntheticPayload {
             || b.max_billable_seconds > MAX_FAL_JOB_BUDGET_SECONDS
             || b.max_micro_usd == 0
             || b.max_artifact_bytes == 0
-            || b.max_artifact_bytes > ruview_forecast_model::MAX_ARTIFACT_BYTES as u64
+            || b.max_artifact_bytes > ruforecast_model::MAX_ARTIFACT_BYTES as u64
             || !(256 * 1024 * 1024..=96 * 1024 * 1024 * 1024).contains(&b.max_memory_bytes)
         {
             return Err(FalError::InvalidHostedPlan("budget"));
@@ -455,7 +455,7 @@ fn validate_memory_budget(payload: &HostedSyntheticPayload) -> Result<(), FalErr
     let forward_cells = activation_cells
         .checked_mul(usize::from(payload.optimizer.batch_size))
         .ok_or(FalError::InvalidHostedPlan("activation estimate overflow"))?;
-    if forward_cells > ruview_forecast_model::MAX_CONFIG_ACTIVATION_CELLS {
+    if forward_cells > ruforecast_model::MAX_CONFIG_ACTIVATION_CELLS {
         return Err(FalError::InvalidHostedPlan(
             "batch exceeds model activation limit",
         ));
@@ -467,7 +467,7 @@ fn validate_memory_budget(payload: &HostedSyntheticPayload) -> Result<(), FalErr
         .ok_or(FalError::InvalidHostedPlan(
             "forward work estimate overflow",
         ))?;
-    if forward_multiply_adds > ruview_forecast_model::MAX_FORWARD_MULTIPLY_ADDS {
+    if forward_multiply_adds > ruforecast_model::MAX_FORWARD_MULTIPLY_ADDS {
         return Err(FalError::InvalidHostedPlan(
             "batch exceeds model forward work limit",
         ));
@@ -563,7 +563,7 @@ impl FalRequestHandle {
 
     fn require_artifact_budget(&self, outcome: &HostedTrainingOutcome) -> Result<(), FalError> {
         if self.max_artifact_bytes == 0
-            || self.max_artifact_bytes > ruview_forecast_model::MAX_ARTIFACT_BYTES as u64
+            || self.max_artifact_bytes > ruforecast_model::MAX_ARTIFACT_BYTES as u64
         {
             return Err(FalError::InvalidResponse);
         }
@@ -1279,7 +1279,7 @@ mod tests {
             max_wall_time_seconds: 60,
             max_billable_seconds: 60,
             max_micro_usd: 1,
-            max_artifact_bytes: ruview_forecast_model::MAX_ARTIFACT_BYTES as u64,
+            max_artifact_bytes: ruforecast_model::MAX_ARTIFACT_BYTES as u64,
             max_memory_bytes: 4 * 1024 * 1024 * 1024,
             cost_basis: HostedCostBasis::UnmeasuredOperatorCap,
         }

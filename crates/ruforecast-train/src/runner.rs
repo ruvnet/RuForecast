@@ -10,8 +10,8 @@ use burn_core::tensor::backend::AutodiffBackend;
 use burn_core::tensor::{ElementConversion, Tensor, TensorData};
 use burn_optim::grad_clipping::GradientClippingConfig;
 use burn_optim::{AdamWConfig, GradientsParams, Optimizer};
-use ruview_forecast_core::CanonicalDigest;
-use ruview_forecast_model::{
+use ruforecast_core::CanonicalDigest;
+use ruforecast_model::{
     masked_pinball_loss, record_to_bytes, ArtifactManifest, ForecastModelConfig, ModelArtifact,
     ModelError, ModelInput, RuForecastMixer, TrainingBatch,
 };
@@ -45,7 +45,7 @@ pub enum TrainingError {
     Model(#[from] ModelError),
     /// Fixed model profile configuration was invalid.
     #[error(transparent)]
-    ModelConfig(#[from] ruview_forecast_model::ConfigError),
+    ModelConfig(#[from] ruforecast_model::ConfigError),
     /// Artifact publication failed.
     #[error(transparent)]
     Artifact(#[from] ArtifactError),
@@ -790,8 +790,8 @@ fn build_candidate(
         weights_digest: *blake3::hash(&weights).as_bytes(),
         seed: request_value.optimizer.seed,
         release_epoch: 1,
-        minimum_runtime_version: ruview_forecast_model::RUNTIME_COMPATIBILITY_VERSION,
-        maximum_runtime_version: ruview_forecast_model::RUNTIME_COMPATIBILITY_VERSION,
+        minimum_runtime_version: ruforecast_model::RUNTIME_COMPATIBILITY_VERSION,
+        maximum_runtime_version: ruforecast_model::RUNTIME_COMPATIBILITY_VERSION,
         expires_at_unix_ms: None,
         build_id: format!("ruforecast-{}", env!("CARGO_PKG_VERSION")),
         teacher_outputs_used: false,

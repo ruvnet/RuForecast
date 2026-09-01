@@ -105,9 +105,9 @@ Describe the exact code surfaces used by this candidate:
 
 | Crate or binary | Version/digest | Responsibility | Enabled features |
 |---|---|---|---|
-| `ruview-forecast-core` | `<REQUIRED>` | Backend-neutral schemas, invariants, metrics, receipts, and `Forecaster` trait | `<REQUIRED; expected default only>` |
-| `ruview-forecast-model` | `<REQUIRED>` | Independent Burn 0.21 patch mixer and artifact execution | `<REQUIRED; CPU/CUDA/WGPU are opt-in and default off>` |
-| `ruview-forecast-train` / `ruforecast` | `<REQUIRED>` | Dataset splits, trainer, evaluator, training receipt, and Linux/fal.ai assets | `<REQUIRED>` |
+| `ruforecast-core` | `<REQUIRED>` | Backend-neutral schemas, invariants, metrics, receipts, and `Forecaster` trait | `<REQUIRED; expected default only>` |
+| `ruforecast-model` | `<REQUIRED>` | Independent Burn 0.21 patch mixer and artifact execution | `<REQUIRED; CPU/CUDA/WGPU are opt-in and default off>` |
+| `ruforecast-train` / `ruforecast` | `<REQUIRED>` | Dataset splits, trainer, evaluator, training receipt, and Linux/fal.ai assets | `<REQUIRED>` |
 | `<optional service/runtime>` | `<REQUIRED or NONE>` | `<REQUIRED>` | `<REQUIRED>` |
 
 State whether inference is offline and whether any runtime network capability

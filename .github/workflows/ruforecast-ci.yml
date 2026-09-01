@@ -4,9 +4,9 @@ on:
   push:
     branches: [main, develop, 'feat/*', 'feature/*']
     paths:
-      - 'v2/crates/ruview-forecast-core/**'
-      - 'v2/crates/ruview-forecast-model/**'
-      - 'v2/crates/ruview-forecast-train/**'
+      - 'v2/crates/ruforecast-core/**'
+      - 'v2/crates/ruforecast-model/**'
+      - 'v2/crates/ruforecast-train/**'
       - 'v2/Cargo.toml'
       - 'v2/Cargo.lock'
       - 'v2/rust-toolchain.toml'
@@ -24,9 +24,9 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - 'v2/crates/ruview-forecast-core/**'
-      - 'v2/crates/ruview-forecast-model/**'
-      - 'v2/crates/ruview-forecast-train/**'
+      - 'v2/crates/ruforecast-core/**'
+      - 'v2/crates/ruforecast-model/**'
+      - 'v2/crates/ruforecast-train/**'
       - 'v2/Cargo.toml'
       - 'v2/Cargo.lock'
       - 'v2/rust-toolchain.toml'
@@ -135,9 +135,9 @@ jobs:
           import tomllib
 
           root = Path("v2/crates")
-          core = tomllib.loads((root / "ruview-forecast-core/Cargo.toml").read_text())
-          model = tomllib.loads((root / "ruview-forecast-model/Cargo.toml").read_text())
-          train = tomllib.loads((root / "ruview-forecast-train/Cargo.toml").read_text())
+          core = tomllib.loads((root / "ruforecast-core/Cargo.toml").read_text())
+          model = tomllib.loads((root / "ruforecast-model/Cargo.toml").read_text())
+          train = tomllib.loads((root / "ruforecast-train/Cargo.toml").read_text())
 
           assert core.get("features", {}).get("default", []) == []
           assert model["features"]["default"] == [], "model defaults must stay backend-free"
@@ -148,8 +148,8 @@ jobs:
           assert {"model", "dep:burn-cuda"} <= set(model["features"]["cuda"])
           assert {"model", "dep:burn-wgpu"} <= set(model["features"]["wgpu"])
           assert "dep:ruvector-core" in model["features"]["ruvector"]
-          assert {"ruview-forecast-model/cpu", "training"} <= set(train["features"]["cpu"])
-          assert {"ruview-forecast-model/cuda", "training"} <= set(train["features"]["cuda"])
+          assert {"ruforecast-model/cpu", "training"} <= set(train["features"]["cpu"])
+          assert {"ruforecast-model/cuda", "training"} <= set(train["features"]["cuda"])
 
           bins = {entry["name"]: entry for entry in train.get("bin", [])}
           assert bins["ruforecast"]["required-features"] == ["cli"]
@@ -166,9 +166,9 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.89.0 fmt
-          -p ruview-forecast-core
-          -p ruview-forecast-model
-          -p ruview-forecast-train
+          -p ruforecast-core
+          -p ruforecast-model
+          -p ruforecast-train
           -- --check
 
       - name: Prove feature-off graph excludes Burn and CubeCL
@@ -177,7 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           : > forecast-feature-off-tree.txt
-          for package in ruview-forecast-core ruview-forecast-model ruview-forecast-train; do
+          for package in ruforecast-core ruforecast-model ruforecast-train; do
             cargo +1.89.0 tree --locked -e normal,build -p "$package" --no-default-features \
               >> forecast-feature-off-tree.txt
           done
@@ -191,46 +191,46 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.89.0 check --locked
-          -p ruview-forecast-core
-          -p ruview-forecast-model
-          -p ruview-forecast-train
+          -p ruforecast-core
+          -p ruforecast-model
+          -p ruforecast-train
           --no-default-features --all-targets
 
       - name: Test model-neutral core
         working-directory: v2
         run: >-
           cargo +1.89.0 test --locked
-          -p ruview-forecast-core
+          -p ruforecast-core
           --no-default-features --lib --tests
 
       - name: Test model contracts without a model backend
         working-directory: v2
         run: >-
           cargo +1.89.0 test --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --lib --tests
 
       - name: Test RuVector retrieval boundary without a model backend
         working-directory: v2
         run: >-
           cargo +1.89.0 test --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features ruvector --lib --tests
 
       - name: Clippy RuVector retrieval boundary
         working-directory: v2
         run: >-
           cargo +1.89.0 clippy --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features ruvector --all-targets -- -D warnings
 
       - name: Clippy forecast packages without backend features
         working-directory: v2
         run: >-
           cargo +1.89.0 clippy --locked
-          -p ruview-forecast-core
-          -p ruview-forecast-model
-          -p ruview-forecast-train
+          -p ruforecast-core
+          -p ruforecast-model
+          -p ruforecast-train
           --no-default-features --all-targets -- -D warnings
 
       - name: Upload feature-off dependency tree
@@ -274,9 +274,9 @@ jobs:
           import sys
 
           roots = [
-              Path("v2/crates/ruview-forecast-core"),
-              Path("v2/crates/ruview-forecast-model"),
-              Path("v2/crates/ruview-forecast-train"),
+              Path("v2/crates/ruforecast-core"),
+              Path("v2/crates/ruforecast-model"),
+              Path("v2/crates/ruforecast-train"),
           ]
           text_suffixes = {".json", ".py", ".rs", ".sh", ".toml", ".yaml", ".yml"}
           forbidden_source = re.compile(r"(?i)\b(?:times[ _-]?fm|google[ _/-]?research)\b")
@@ -306,7 +306,7 @@ jobs:
                       if pattern.search(text):
                           errors.append(f"possible {label} in {path}")
 
-          fal_source = Path("v2/crates/ruview-forecast-train/src/fal.rs").read_text()
+          fal_source = Path("v2/crates/ruforecast-train/src/fal.rs").read_text()
           for struct_name in ("HostedOptimizer", "HostedBudget", "HostedSyntheticPayload"):
               match = re.search(
                   rf"pub struct {struct_name}\s*\{{(?P<body>.*?)^\}}",
@@ -349,7 +349,7 @@ jobs:
       - name: Validate minimal fal deployment archive policy
         run: >-
           python3
-          v2/crates/ruview-forecast-train/deploy/fal/deploy.py
+          v2/crates/ruforecast-train/deploy/fal/deploy.py
           self-test
 
       - name: Prove hosted feature graph excludes Burn and CubeCL
@@ -358,7 +358,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo +1.89.0 tree --locked -e normal,build \
-            -p ruview-forecast-train \
+            -p ruforecast-train \
             --no-default-features --features cli,server,fal-client \
             > forecast-hosted-feature-tree.txt
           if grep -Eiq '(^|[[:space:]])(burn|cubecl)(-|[[:space:]])' \
@@ -376,7 +376,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo +1.89.0 test --locked \
-            -p ruview-forecast-train \
+            -p ruforecast-train \
             --no-default-features --features cli,server,fal-client \
             --lib --bins --tests -- --list \
             | tee hosted-boundary-tests.txt
@@ -408,7 +408,7 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.89.0 test --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cli,server,fal-client
           privacy_external_dataset_payload_is_denied
 
@@ -418,7 +418,7 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.89.0 test --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cli,server,fal-client
           --lib --bins --tests
 
@@ -428,7 +428,7 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.89.0 clippy --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cli,server,fal-client
           --all-targets -- -D warnings
 
@@ -438,7 +438,7 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.89.0 clippy --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cli
           --bin ruforecast -- -D warnings
 
@@ -477,21 +477,21 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.92.0 test --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features cpu --lib --tests
 
       - name: Test trainer and CLI with Burn CPU backend
         working-directory: v2
         run: >-
           cargo +1.92.0 test --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cpu,cli --lib --bins
 
       - name: Run one-step local JSONL training smoke
         working-directory: v2
         run: >-
           cargo +1.92.0 test --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cpu
           --test local_jsonl_smoke --
           --exact local_hash_addressed_jsonl_executes_one_real_optimizer_step
@@ -500,7 +500,7 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.92.0 test --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cpu,cli
           --test cli_smoke --
           --exact cli_smoke_trains_and_writes_the_complete_candidate_set
@@ -511,7 +511,7 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.92.0 test --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cpu,cli,server,fal-client
           --lib --bins
 
@@ -519,7 +519,7 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.92.0 clippy --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features cpu --all-targets -- -D warnings
 
       - name: Clippy trainer and CLI with Burn CPU backend
@@ -528,7 +528,7 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.92.0 clippy --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cpu,cli,server,fal-client
           --all-targets -- -D warnings
 
@@ -536,7 +536,7 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.92.0 bench --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features cpu
           --bench forecast_inference --no-run
 
@@ -544,7 +544,7 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.92.0 bench --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cpu
           --bench data_pipeline --no-run
 
@@ -556,7 +556,7 @@ jobs:
           set -o pipefail
           mkdir -p ../bench-out/ruforecast
           cargo +1.92.0 bench --locked \
-            -p ruview-forecast-model \
+            -p ruforecast-model \
             --no-default-features --features cpu \
             --bench forecast_inference -- \
             --warm-up-time 1 --measurement-time 2 --sample-size 10 \
@@ -570,7 +570,7 @@ jobs:
           set -o pipefail
           mkdir -p ../bench-out/ruforecast
           cargo +1.92.0 bench --locked \
-            -p ruview-forecast-train \
+            -p ruforecast-train \
             --no-default-features --features cpu \
             --bench data_pipeline -- \
             --warm-up-time 1 --measurement-time 2 --sample-size 10 \
@@ -610,14 +610,14 @@ jobs:
         working-directory: v2
         run: >-
           cargo +1.92.0 check --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features cuda --lib
 
       - name: Check model WGPU feature
         working-directory: v2
         run: >-
           cargo +1.92.0 check --locked
-          -p ruview-forecast-model
+          -p ruforecast-model
           --no-default-features --features wgpu --lib
 
       - name: Check trainer CUDA and hosted-server feature combination
@@ -626,6 +626,6 @@ jobs:
           FAL_KEY: ''
         run: >-
           cargo +1.92.0 check --locked
-          -p ruview-forecast-train
+          -p ruforecast-train
           --no-default-features --features cuda,cli,server
           --lib --bins

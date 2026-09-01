@@ -3,12 +3,12 @@
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
-use ruview_forecast_core::{
+use ruforecast_core::{
     CanonicalDigest, DataPolicy, HoldoutKey, NormalizationPolicy, PrivacyClass, QuantileSet,
     SeriesKey, SourceState, SplitMember, SplitStrategy, TemporalSplitPlan, TimeRange, TrainSpec,
     TrainingDestinationKind,
 };
-use ruview_forecast_model::ForecastModelConfig;
+use ruforecast_model::ForecastModelConfig;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
@@ -511,7 +511,7 @@ impl TrainingBudget {
                 "max_memory_bytes must be between 256 MiB and 96 GiB",
             ));
         }
-        if !(1024 * 1024..=ruview_forecast_model::MAX_ARTIFACT_BYTES as u64 * 4)
+        if !(1024 * 1024..=ruforecast_model::MAX_ARTIFACT_BYTES as u64 * 4)
             .contains(&self.max_artifact_bytes)
         {
             return Err(ConfigError::InvalidBudget("invalid max_artifact_bytes"));
@@ -684,7 +684,7 @@ impl TrainingRequest {
             .ok_or(ConfigError::InvalidBudget(
                 "forward multiply-add estimate overflow",
             ))?;
-        if forward_multiply_adds > ruview_forecast_model::MAX_FORWARD_MULTIPLY_ADDS {
+        if forward_multiply_adds > ruforecast_model::MAX_FORWARD_MULTIPLY_ADDS {
             return Err(ConfigError::InvalidBudget(
                 "batch exceeds the model forward multiply-add limit",
             ));

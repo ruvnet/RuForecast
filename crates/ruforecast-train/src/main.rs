@@ -6,29 +6,29 @@ use std::sync::Arc;
 use anyhow::Context;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ruview_forecast_core::{
+use ruforecast_core::{
     CanonicalDigest, DataPolicy, HoldoutKey, NormalizationPolicy, PrivacyClass, QuantileSet,
     SeriesKey, SplitMember, SplitStrategy, TemporalSplitPlan, TimeRange,
 };
 #[cfg(any(feature = "fal-client", feature = "cpu", feature = "cuda"))]
-use ruview_forecast_train::config::SyntheticDatasetSpec;
-use ruview_forecast_train::config::{
+use ruforecast_train::config::SyntheticDatasetSpec;
+use ruforecast_train::config::{
     DatasetInput, DatasetSource, JobId, LocalTrainSpecWire, LocalTrainingRequestWire, ModelProfile,
     OptimizerSpec, RelativeDataPath, Sha256Digest, TrainingBudget, TrainingDevice,
 };
-use ruview_forecast_train::corpus::JsonlWindow;
+use ruforecast_train::corpus::JsonlWindow;
 
 // Keep all executable paths in Rust and all training choices typed. There is
 // intentionally no command/argument passthrough to a shell.
 #[cfg(all(feature = "fal-client", not(any(feature = "cpu", feature = "cuda"))))]
-use ruview_forecast_train::config::synthetic_train_spec;
+use ruforecast_train::config::synthetic_train_spec;
 #[cfg(any(feature = "cpu", feature = "cuda"))]
-use ruview_forecast_train::{
+use ruforecast_train::{
     artifact::ArtifactStore,
     config::{synthetic_train_spec, TrainingRequest},
 };
 #[cfg(any(feature = "cpu", feature = "cuda"))]
-use ruview_forecast_train::{cancel::NeverCancel, config::load_request};
+use ruforecast_train::{cancel::NeverCancel, config::load_request};
 
 #[derive(Parser)]
 #[command(
@@ -684,7 +684,7 @@ fn smoke(output: PathBuf, job_id: String, windows: u32) -> Result<()> {
         let request = TrainingRequest::new_local(
             JobId::new(job_id)?,
             train,
-            ruview_forecast_train::config::DatasetSource::Synthetic(generator),
+            ruforecast_train::config::DatasetSource::Synthetic(generator),
             ModelProfile::TinyCi,
             TrainingDevice::Cpu,
             OptimizerSpec {
@@ -705,7 +705,7 @@ fn smoke(output: PathBuf, job_id: String, windows: u32) -> Result<()> {
             },
         )?
         .into_validated()?;
-        let outcome = ruview_forecast_train::runner::BurnTrainer::new(ArtifactStore::new(output)?)
+        let outcome = ruforecast_train::runner::BurnTrainer::new(ArtifactStore::new(output)?)
             .train(&request, &NeverCancel)?;
         println!("{}", serde_json::to_string_pretty(&outcome)?);
         Ok(())
@@ -721,7 +721,7 @@ fn train_local(request: PathBuf, dataset_root: PathBuf, output: PathBuf) -> Resu
     #[cfg(any(feature = "cpu", feature = "cuda"))]
     {
         let request = load_request(&request)?;
-        let trainer = ruview_forecast_train::runner::BurnTrainer::with_dataset_root(
+        let trainer = ruforecast_train::runner::BurnTrainer::with_dataset_root(
             ArtifactStore::new(output)?,
             dataset_root,
         );
@@ -745,7 +745,7 @@ async fn serve(bind: String, output: PathBuf) -> Result<()> {
         let listener = tokio::net::TcpListener::bind(&bind)
             .await
             .context("bind Direct Server")?;
-        axum::serve(listener, ruview_forecast_train::server::router(executor)).await?;
+        axum::serve(listener, ruforecast_train::server::router(executor)).await?;
         Ok(())
     }
 }
@@ -755,12 +755,12 @@ struct BurnServerExecutor {
     artifacts: ArtifactStore,
 }
 #[cfg(all(feature = "server", any(feature = "cpu", feature = "cuda")))]
-impl ruview_forecast_train::server::SyntheticJobExecutor for BurnServerExecutor {
+impl ruforecast_train::server::SyntheticJobExecutor for BurnServerExecutor {
     fn execute(
         &self,
-        payload: ruview_forecast_train::fal::HostedSyntheticPayload,
-        cancel: &ruview_forecast_train::cancel::CancelToken,
-    ) -> Result<ruview_forecast_train::fal::HostedTrainingOutcome, String> {
+        payload: ruforecast_train::fal::HostedSyntheticPayload,
+        cancel: &ruforecast_train::cancel::CancelToken,
+    ) -> Result<ruforecast_train::fal::HostedTrainingOutcome, String> {
         payload
             .validate_for_worker(unix_ms())
             .map_err(|e| e.to_string())?;
@@ -800,7 +800,7 @@ impl ruview_forecast_train::server::SyntheticJobExecutor for BurnServerExecutor 
         let request = TrainingRequest::new_local(
             job_id,
             train,
-            ruview_forecast_train::config::DatasetSource::Synthetic(generator),
+            ruforecast_train::config::DatasetSource::Synthetic(generator),
             payload.model_profile,
             device,
             optimizer,
@@ -814,15 +814,15 @@ impl ruview_forecast_train::server::SyntheticJobExecutor for BurnServerExecutor 
         )
         .and_then(|request| {
             request.bind_hosted_synthetic_execution(
-                ruview_forecast_core::CanonicalDigest::from_bytes(*request_digest.as_bytes()),
+                ruforecast_core::CanonicalDigest::from_bytes(*request_digest.as_bytes()),
             )
         })
         .and_then(|r| r.into_validated())
         .map_err(|e| e.to_string())?;
-        let outcome = ruview_forecast_train::runner::BurnTrainer::new(self.artifacts.clone())
+        let outcome = ruforecast_train::runner::BurnTrainer::new(self.artifacts.clone())
             .train(&request, cancel)
             .map_err(|e| e.to_string())?;
-        let hosted = ruview_forecast_train::fal::HostedTrainingOutcome::new(
+        let hosted = ruforecast_train::fal::HostedTrainingOutcome::new(
             request_digest,
             job_digest,
             worker_build_id,
@@ -852,10 +852,10 @@ impl BurnServerExecutor {
                 std::thread::sleep(std::time::Duration::from_millis(remaining.max(1)));
             }
             for kind in [
-                ruview_forecast_train::artifact::ArtifactKind::Model,
-                ruview_forecast_train::artifact::ArtifactKind::Manifest,
-                ruview_forecast_train::artifact::ArtifactKind::Receipt,
-                ruview_forecast_train::artifact::ArtifactKind::Checkpoint,
+                ruforecast_train::artifact::ArtifactKind::Model,
+                ruforecast_train::artifact::ArtifactKind::Manifest,
+                ruforecast_train::artifact::ArtifactKind::Receipt,
+                ruforecast_train::artifact::ArtifactKind::Checkpoint,
             ] {
                 let filename = kind.filename();
                 let _ = std::fs::remove_file(job_directory.join(filename));
@@ -877,7 +877,7 @@ async fn fal(command: FalCommand) -> Result<()> {
     }
     #[cfg(feature = "fal-client")]
     {
-        use ruview_forecast_train::fal::*;
+        use ruforecast_train::fal::*;
         let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
         match command {
             FalCommand::Submit {
@@ -937,7 +937,7 @@ async fn fal(command: FalCommand) -> Result<()> {
                     max_wall_time_seconds,
                     max_billable_seconds,
                     max_micro_usd,
-                    max_artifact_bytes: ruview_forecast_model::MAX_ARTIFACT_BYTES as u64,
+                    max_artifact_bytes: ruforecast_model::MAX_ARTIFACT_BYTES as u64,
                     max_memory_bytes,
                     cost_basis: HostedCostBasis::UnmeasuredOperatorCap,
                 };
@@ -1026,7 +1026,7 @@ async fn fal(command: FalCommand) -> Result<()> {
                     max_artifact_bytes,
                 )?;
                 let outcome = c.result(&h).await?;
-                let store = ruview_forecast_train::artifact::ArtifactStore::new(quarantine)?;
+                let store = ruforecast_train::artifact::ArtifactStore::new(quarantine)?;
                 let downloaded = c.download_outcome(&h, &outcome, &store).await?;
                 println!("{}", serde_json::to_string_pretty(&downloaded)?);
             }
@@ -1036,9 +1036,9 @@ async fn fal(command: FalCommand) -> Result<()> {
 }
 
 #[cfg(feature = "fal-client")]
-fn configured_fal_app() -> Result<ruview_forecast_train::fal::FalApp> {
+fn configured_fal_app() -> Result<ruforecast_train::fal::FalApp> {
     let value = std::env::var("RUVIEW_FAL_APP").context("RUVIEW_FAL_APP is required")?;
-    Ok(ruview_forecast_train::fal::FalApp::new(value)?)
+    Ok(ruforecast_train::fal::FalApp::new(value)?)
 }
 
 #[cfg(feature = "fal-client")]
@@ -1048,10 +1048,10 @@ fn fal_handle(
     job_digest: String,
     artifacts_expire_at_ms: u64,
     max_artifact_bytes: u64,
-) -> Result<ruview_forecast_train::fal::FalRequestHandle> {
+) -> Result<ruforecast_train::fal::FalRequestHandle> {
     let (worker_build_id, build_manifest_digest) = configured_worker_identity()?;
-    Ok(ruview_forecast_train::fal::FalRequestHandle {
-        request_id: ruview_forecast_train::fal::FalRequestId::new(request_id)?,
+    Ok(ruforecast_train::fal::FalRequestHandle {
+        request_id: ruforecast_train::fal::FalRequestId::new(request_id)?,
         request_digest: Sha256Digest::from_hex(&request_digest)?,
         job_digest: Sha256Digest::from_hex(&job_digest)?,
         worker_build_id,
@@ -1078,12 +1078,12 @@ fn verify_candidate(path: PathBuf) -> Result<()> {
     let mut file = std::fs::File::open(path)?;
     let mut bytes = Vec::new();
     file.by_ref()
-        .take(ruview_forecast_model::MAX_ARTIFACT_BYTES as u64 + 1)
+        .take(ruforecast_model::MAX_ARTIFACT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > ruview_forecast_model::MAX_ARTIFACT_BYTES {
+    if bytes.len() > ruforecast_model::MAX_ARTIFACT_BYTES {
         bail!("candidate exceeds cap");
     }
-    let candidate = ruview_forecast_model::ModelArtifact::decode(&bytes)?;
+    let candidate = ruforecast_model::ModelArtifact::decode(&bytes)?;
     println!(
         "candidate valid (UNTRUSTED, unsigned): {}",
         candidate
@@ -1099,7 +1099,7 @@ fn verify_candidate(path: PathBuf) -> Result<()> {
 /// Reads held-out windows for `evaluate`: one JSON [`JsonlWindow`] per line,
 /// bounded the same way a training shard line is bounded. This is a
 /// deliberately simpler reader than the training path's
-/// [`ruview_forecast_train::corpus::JsonlWindowReader`], which additionally
+/// [`ruforecast_train::corpus::JsonlWindowReader`], which additionally
 /// verifies a declared dataset manifest (sha256/digest) before trusting a
 /// shard -- not needed here, since the operator running this CLI supplies
 /// both the candidate and the held-out file directly, with no untrusted
@@ -1117,12 +1117,12 @@ fn read_test_windows(path: &std::path::Path) -> Result<Vec<JsonlWindow>> {
         if line.trim().is_empty() {
             continue;
         }
-        if line.len() > ruview_forecast_train::config::MAX_JSONL_LINE_BYTES {
+        if line.len() > ruforecast_train::config::MAX_JSONL_LINE_BYTES {
             bail!(
                 "line {} of {} exceeds {} bytes",
                 line_index + 1,
                 path.display(),
-                ruview_forecast_train::config::MAX_JSONL_LINE_BYTES
+                ruforecast_train::config::MAX_JSONL_LINE_BYTES
             );
         }
         let window: JsonlWindow = serde_json::from_str(&line)
@@ -1156,13 +1156,13 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
     #[cfg(feature = "cpu")]
     {
         use anyhow::Context as _;
-        use ruview_forecast_core::{
+        use ruforecast_core::{
             interval_coverage, weighted_quantile_loss, weighted_quantile_loss_by_horizon,
             DataPolicy, FeatureSchema, FeatureSpec, Forecast, ForecastOutcome, ForecastRequest,
             Forecaster, LastValueForecaster, PrivacyClass, SeasonalNaiveForecaster, SourceState,
             TimeSeries,
         };
-        use ruview_forecast_model::{activate_for_evaluation, build_eval_input, CpuDevice};
+        use ruforecast_model::{activate_for_evaluation, build_eval_input, CpuDevice};
 
         let candidate_bytes = std::fs::read(&candidate)
             .with_context(|| format!("reading candidate {}", candidate.display()))?;
@@ -1172,7 +1172,7 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
         // of the candidate file, not that it matches a specific dataset.
         // Contrast the real training/activation path, which checks against
         // an independently supplied policy.
-        let declared_digest = ruview_forecast_model::ModelArtifact::decode(&candidate_bytes)
+        let declared_digest = ruforecast_model::ModelArtifact::decode(&candidate_bytes)
             .context("decoding candidate before evaluation-only activation")?
             .manifest()
             .feature_schema_digest;

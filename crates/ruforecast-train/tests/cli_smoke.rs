@@ -17,7 +17,7 @@ fn cli_prepares_a_loadable_local_example_without_overwrite() {
     assert!(example.join("train.jsonl").is_file());
     let request_path = example.join("train-local.toml");
     assert!(request_path.is_file());
-    ruview_forecast_train::config::load_request(&request_path).expect("load generated request");
+    ruforecast_train::config::load_request(&request_path).expect("load generated request");
     assert!(!run().success(), "existing example must not be overwritten");
 }
 

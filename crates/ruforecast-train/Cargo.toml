@@ -1,5 +1,5 @@
 [package]
-name = "ruview-forecast-train"
+name = "ruforecast-train"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -17,8 +17,8 @@ default = []
 cli = ["dep:anyhow", "dep:clap", "dep:tokio", "dep:tracing-subscriber"]
 server = ["fal-client", "dep:axum", "dep:http-body-util", "dep:tokio"]
 fal-client = ["dep:reqwest", "dep:tokio", "dep:url"]
-cpu = ["ruview-forecast-model/cpu", "training", "dep:burn-ndarray"]
-cuda = ["ruview-forecast-model/cuda", "training", "dep:burn-cuda"]
+cpu = ["ruforecast-model/cpu", "training", "dep:burn-ndarray"]
+cuda = ["ruforecast-model/cuda", "training", "dep:burn-cuda"]
 training = ["dep:burn-autodiff", "dep:burn-core", "dep:burn-optim"]
 
 [dependencies]
@@ -35,8 +35,8 @@ hex = "0.4"
 http-body-util = { version = "0.1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"], optional = true }
 rustix = { version = "1", features = ["fs"] }
-ruview-forecast-core.workspace = true
-ruview-forecast-model.workspace = true
+ruforecast-core.workspace = true
+ruforecast-model.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true

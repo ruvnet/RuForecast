@@ -5,7 +5,7 @@
 use burn_core::tensor::{backend::Backend, Tensor};
 use burn_ndarray::{NdArray, NdArrayDevice};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use ruview_forecast_model::{ForecastModelConfig, ModelInput, RuForecastMixer};
+use ruforecast_model::{ForecastModelConfig, ModelInput, RuForecastMixer};
 
 type Cpu = NdArray<f32>;
 

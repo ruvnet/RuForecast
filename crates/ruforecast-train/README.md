@@ -8,7 +8,7 @@ used Google TimesFM code, configuration, tests, weights, or outputs.
 ```bash
 cd v2
 rustup toolchain install 1.92.0
-cargo +1.92.0 run --locked -p ruview-forecast-train \
+cargo +1.92.0 run --locked -p ruforecast-train \
   --no-default-features --features cpu,cli --bin ruforecast -- \
   smoke --job-id smoke-001 --windows 4 --output ./artifacts
 ```
@@ -21,7 +21,7 @@ runtime until a separate local release authority verifies and signs it.
 Validate an unsigned candidate without granting trust:
 
 ```bash
-cargo +1.92.0 run --locked -p ruview-forecast-train \
+cargo +1.92.0 run --locked -p ruforecast-train \
   --no-default-features --features cli --bin ruforecast -- \
   verify-candidate --candidate ./artifacts/smoke-001/model.mpk
 ```
@@ -51,7 +51,7 @@ directory and refuses to overwrite it:
 
 ```bash
 cd v2
-cargo +1.92.0 run --locked -p ruview-forecast-train \
+cargo +1.92.0 run --locked -p ruforecast-train \
   --no-default-features --features cli --bin ruforecast -- \
   prepare-local-example --directory ./local-example
 ```
@@ -69,7 +69,7 @@ Run:
 
 ```bash
 cd v2
-cargo +1.92.0 run --locked -p ruview-forecast-train \
+cargo +1.92.0 run --locked -p ruforecast-train \
   --no-default-features --features cpu,cli --bin ruforecast -- \
   train-local --request ./local-example/train-local.toml \
   --dataset-root ./local-example --output /srv/ruview-artifacts
@@ -116,10 +116,10 @@ python -m venv .venv-fal
 pip install "fal==1.80.0"
 fal auth login
 fal auth whoami
-python v2/crates/ruview-forecast-train/deploy/fal/deploy.py self-test
-python v2/crates/ruview-forecast-train/deploy/fal/deploy.py run \
+python v2/crates/ruforecast-train/deploy/fal/deploy.py self-test
+python v2/crates/ruforecast-train/deploy/fal/deploy.py run \
   --receipt /secure/operator/ruforecast-fal-run.json
-python v2/crates/ruview-forecast-train/deploy/fal/deploy.py deploy \
+python v2/crates/ruforecast-train/deploy/fal/deploy.py deploy \
   --receipt /secure/operator/ruforecast-fal-deploy.json
 ```
 
@@ -132,7 +132,7 @@ export RUVIEW_FAL_APP=OWNER/ruforecast
 export RUVIEW_WORKER_BUILD_ID="$(jq -r .worker_build_id /secure/operator/ruforecast-fal-deploy.json)"
 export RUVIEW_BUILD_MANIFEST_SHA256="$(jq -r .build_manifest_sha256 /secure/operator/ruforecast-fal-deploy.json)"
 cargo +1.92.0 build --locked --release --manifest-path v2/Cargo.toml \
-  -p ruview-forecast-train --no-default-features --features cli,fal-client \
+  -p ruforecast-train --no-default-features --features cli,fal-client \
   --bin ruforecast
 RUF=./v2/target/release/ruforecast
 "$RUF" fal submit \

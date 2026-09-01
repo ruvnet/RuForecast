@@ -28,8 +28,8 @@ to a separately governed Linux or hosted-accelerator receipt.
 
 | Package | Target | Purpose | CI authority |
 |---|---|---|---|
-| `ruview-forecast-model` | `forecast_inference` | Fixed-seed forward pass, batch and shape scaling, ordered-quantile output | Compile gate; shared-runner timing is informational |
-| `ruview-forecast-train` | `data_pipeline` | Fixed generated records through validation, windowing, masking and batching | Compile gate; shared-runner timing is informational |
+| `ruforecast-model` | `forecast_inference` | Fixed-seed forward pass, batch and shape scaling, ordered-quantile output | Compile gate; shared-runner timing is informational |
+| `ruforecast-train` | `data_pipeline` | Fixed generated records through validation, windowing, masking and batching | Compile gate; shared-runner timing is informational |
 
 Both targets must use code-generated synthetic inputs, fixed seeds, bounded
 allocations, `criterion::black_box`, and `required-features = ["cpu"]`. Setup,
@@ -77,19 +77,19 @@ To compile the two benchmark targets without measuring them:
 
 ```bash
 cd v2
-cargo +1.92.0 bench --locked -p ruview-forecast-model \
+cargo +1.92.0 bench --locked -p ruforecast-model \
   --no-default-features --features cpu --bench forecast_inference --no-run
-cargo +1.92.0 bench --locked -p ruview-forecast-train \
+cargo +1.92.0 bench --locked -p ruforecast-train \
   --no-default-features --features cpu --bench data_pipeline --no-run
 ```
 
 For a short informational run, use the same targets without `--no-run`:
 
 ```bash
-cargo +1.92.0 bench --locked -p ruview-forecast-model \
+cargo +1.92.0 bench --locked -p ruforecast-model \
   --no-default-features --features cpu --bench forecast_inference -- \
   --warm-up-time 1 --measurement-time 2 --sample-size 10
-cargo +1.92.0 bench --locked -p ruview-forecast-train \
+cargo +1.92.0 bench --locked -p ruforecast-train \
   --no-default-features --features cpu --bench data_pipeline -- \
   --warm-up-time 1 --measurement-time 2 --sample-size 10
 ```

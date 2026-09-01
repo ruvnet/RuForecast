@@ -55,7 +55,7 @@ pub fn activate_for_evaluation(
 }
 
 /// Deterministic periodic UTC time features, matching the training encoder
-/// in `ruview-forecast-train`'s batch builder.
+/// in `ruforecast-train`'s batch builder.
 fn time_features(step_seconds: u64, width: usize) -> Vec<f32> {
     let periods = [60.0_f64, 3_600.0, 86_400.0, 604_800.0];
     let mut values = Vec::with_capacity(width.max(periods.len() * 2));

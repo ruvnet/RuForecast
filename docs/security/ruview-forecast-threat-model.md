@@ -2,8 +2,8 @@
 
 - **Status:** normative implementation and release gate
 - **Date:** 2026-09-01
-- **Scope:** `ruview-forecast-core`, `ruview-forecast-model`,
-  `ruview-forecast-train`, RuView API integration, RuVector retrieval, and hosted
+- **Scope:** `ruforecast-core`, `ruforecast-model`,
+  `ruforecast-train`, RuView API integration, RuVector retrieval, and hosted
   training on fal
 - **Extends:** ADR-260, ADR-262, ADR-271, ADR-295, ADR-299, ADR-304, ADR-305,
   ADR-319, and ADR-348
@@ -69,14 +69,14 @@ is claimed to pass merely because a draft type or test exists.
 
 | ID | Severity | Snapshot evidence | Required closure |
 |---|---|---|---|
-| RFSEC-001 | **Critical** | `ruview-forecast-core/src/series.rs:147-210` carries evidence state but no ADR-260 privacy/tenant policy; `ruview-forecast-train/src/config.rs:218-359` binds dataset path/size/hash but no privacy class, tenant/account/workspace, purpose, consent/DPA, retention or export decision. | Bind real data to a validated local policy, but make hosted v1 a separate synthetic-recipe-only DTO. Reject every real/external dataset, including P1/P2, before network I/O. Evidence class is not privacy class. |
-| RFSEC-002 | **Critical** | `ruview-forecast-model/src/artifact.rs:42-105,145-175` checks a BLAKE3 weights digest declared inside the same unsigned manifest. An attacker able to replace both weights and manifest satisfies that check. | Treat it only as an untrusted candidate, then require a domain-separated canonical manifest signature, local Ed25519 signer allowlist, compatibility/finite checks and a nonconstructible activated-artifact wrapper. Fal never receives the release key. |
-| RFSEC-003 | **High** | `ruview-forecast-model/src/config.rs:126-217` has no hard dimension/activation caps, and expressions such as `3 * patch_len`, `6 * d`, `2 * d`, `3 * d`, `q * r` and `q * horizon` can overflow before the checked helpers. Patch/layer allocation is not bounded by parameter count alone. | Add per-dimension, parameter, patch/token, activation-byte and total-work caps. Use checked arithmetic for every intermediate before model allocation. |
-| RFSEC-004 | **High** | `ruview-forecast-model/src/network.rs:43-60,278-361` validates tensor shapes but not batch/total cells, finite values, binary masks, bounded ages or finite outputs. | Require a validated input wrapper or adapter gate and post-inference finite/order validation; malformed data must return an error/abstention before backend panic or propagation. |
-| RFSEC-005 | **High** | `ruview-forecast-train/src/artifact.rs:117-146,245-264` canonicalizes a path and later opens it; existing final paths are reopened without no-follow semantics. Directory or final symlinks can race the check. | Use capability/open-at/no-follow handling, verify the opened handle, and keep root/job directories mode `0700` with files `0600`. Do not trust a lexical/canonical path checked before open. |
-| RFSEC-006 | **High** | `ruview-forecast-train/src/config.rs:396-421` checks path metadata and then calls `std::fs::read`, permitting replacement or growth between the check and unbounded read. | Open once, inspect the handle, read through `take(MAX+1)`, and reject any over-limit/trailing byte before parsing. |
-| RFSEC-007 | **High** | `ruview-forecast-train/src/artifact.rs:77-90` directly deserializes an absolute `provider_path`, size and digest with public fields. | Return a bounded opaque artifact ID or validated provider-relative handle. Treat all fal descriptors as wire DTOs and revalidate before URL construction or file access. |
-| RFSEC-008 | **Medium** | `ruview-forecast-train/src/config.rs:12-16,297-339` permits a 512 GiB dataset, 10,000 epochs and batch 8,192 without a tenant budget, wall-time or total-work estimate. | Apply deployment-lower byte limits plus checked work/GPU-hour/currency, attempt, wall-time and concurrency quotas before submission. |
+| RFSEC-001 | **Critical** | `ruforecast-core/src/series.rs:147-210` carries evidence state but no ADR-260 privacy/tenant policy; `ruforecast-train/src/config.rs:218-359` binds dataset path/size/hash but no privacy class, tenant/account/workspace, purpose, consent/DPA, retention or export decision. | Bind real data to a validated local policy, but make hosted v1 a separate synthetic-recipe-only DTO. Reject every real/external dataset, including P1/P2, before network I/O. Evidence class is not privacy class. |
+| RFSEC-002 | **Critical** | `ruforecast-model/src/artifact.rs:42-105,145-175` checks a BLAKE3 weights digest declared inside the same unsigned manifest. An attacker able to replace both weights and manifest satisfies that check. | Treat it only as an untrusted candidate, then require a domain-separated canonical manifest signature, local Ed25519 signer allowlist, compatibility/finite checks and a nonconstructible activated-artifact wrapper. Fal never receives the release key. |
+| RFSEC-003 | **High** | `ruforecast-model/src/config.rs:126-217` has no hard dimension/activation caps, and expressions such as `3 * patch_len`, `6 * d`, `2 * d`, `3 * d`, `q * r` and `q * horizon` can overflow before the checked helpers. Patch/layer allocation is not bounded by parameter count alone. | Add per-dimension, parameter, patch/token, activation-byte and total-work caps. Use checked arithmetic for every intermediate before model allocation. |
+| RFSEC-004 | **High** | `ruforecast-model/src/network.rs:43-60,278-361` validates tensor shapes but not batch/total cells, finite values, binary masks, bounded ages or finite outputs. | Require a validated input wrapper or adapter gate and post-inference finite/order validation; malformed data must return an error/abstention before backend panic or propagation. |
+| RFSEC-005 | **High** | `ruforecast-train/src/artifact.rs:117-146,245-264` canonicalizes a path and later opens it; existing final paths are reopened without no-follow semantics. Directory or final symlinks can race the check. | Use capability/open-at/no-follow handling, verify the opened handle, and keep root/job directories mode `0700` with files `0600`. Do not trust a lexical/canonical path checked before open. |
+| RFSEC-006 | **High** | `ruforecast-train/src/config.rs:396-421` checks path metadata and then calls `std::fs::read`, permitting replacement or growth between the check and unbounded read. | Open once, inspect the handle, read through `take(MAX+1)`, and reject any over-limit/trailing byte before parsing. |
+| RFSEC-007 | **High** | `ruforecast-train/src/artifact.rs:77-90` directly deserializes an absolute `provider_path`, size and digest with public fields. | Return a bounded opaque artifact ID or validated provider-relative handle. Treat all fal descriptors as wire DTOs and revalidate before URL construction or file access. |
+| RFSEC-008 | **Medium** | `ruforecast-train/src/config.rs:12-16,297-339` permits a 512 GiB dataset, 10,000 epochs and batch 8,192 without a tenant budget, wall-time or total-work estimate. | Apply deployment-lower byte limits plus checked work/GPU-hour/currency, attempt, wall-time and concurrency quotas before submission. |
 | RFSEC-009 | **High** | `.github/workflows/ruforecast-ci.yml:206-232` exercises `cpu`/`cli`, while train's `server` and `fal-client` feature surfaces are not compiled, tested or linted. | Add mock-network jobs for `server,fal-client`, security-contract tests, blocking secret/privacy gates, and fuzz/property jobs before merging external integration. |
 
 ### Closure re-review ledger
@@ -915,28 +915,28 @@ format/advisory debt; do not claim unrelated workspace debt is green.
 cd v2
 
 cargo +1.89.0 fmt \
-  -p ruview-forecast-core -p ruview-forecast-model -p ruview-forecast-train \
+  -p ruforecast-core -p ruforecast-model -p ruforecast-train \
   -- --check
 
-cargo +1.89.0 test --locked -p ruview-forecast-core \
+cargo +1.89.0 test --locked -p ruforecast-core \
   --no-default-features --lib --tests
-cargo +1.89.0 test --locked -p ruview-forecast-model \
+cargo +1.89.0 test --locked -p ruforecast-model \
   --no-default-features --features ruvector --lib --tests
-cargo +1.89.0 clippy --locked -p ruview-forecast-model \
+cargo +1.89.0 clippy --locked -p ruforecast-model \
   --no-default-features --features ruvector --all-targets -- -D warnings
 
-FAL_KEY='' cargo +1.89.0 test --locked -p ruview-forecast-train \
+FAL_KEY='' cargo +1.89.0 test --locked -p ruforecast-train \
   --no-default-features --features cli,server,fal-client --lib --bins --tests
-FAL_KEY='' cargo +1.89.0 clippy --locked -p ruview-forecast-train \
+FAL_KEY='' cargo +1.89.0 clippy --locked -p ruforecast-train \
   --no-default-features --features cli,server,fal-client --all-targets -- -D warnings
 
-cargo +1.92.0 test --locked -p ruview-forecast-model \
+cargo +1.92.0 test --locked -p ruforecast-model \
   --no-default-features --features cpu --lib --tests
-cargo +1.92.0 test --locked -p ruview-forecast-train \
+cargo +1.92.0 test --locked -p ruforecast-train \
   --no-default-features --features cpu,cli,server,fal-client --lib --bins --tests
-cargo +1.92.0 clippy --locked -p ruview-forecast-model \
+cargo +1.92.0 clippy --locked -p ruforecast-model \
   --no-default-features --features cpu --all-targets -- -D warnings
-cargo +1.92.0 clippy --locked -p ruview-forecast-train \
+cargo +1.92.0 clippy --locked -p ruforecast-train \
   --no-default-features --features cpu,cli,server,fal-client \
   --all-targets -- -D warnings
 ```

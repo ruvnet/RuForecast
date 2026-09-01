@@ -95,9 +95,9 @@ The initial implementation is split across three crates:
 
 | Crate | Owned responsibility | Dependency/runtime rule |
 |---|---|---|
-| `ruview-forecast-core` | Backend-neutral schemas, invariants, metrics, forecast receipts, and the `Forecaster` trait | No Burn, CUDA, WGPU, provider SDK, sensing-server, or network dependency |
-| `ruview-forecast-model` | Independent Burn 0.21 patch-mixer architecture and artifact execution | CPU, CUDA, and WGPU are explicit optional features; every backend feature is off by default |
-| `ruview-forecast-train` | Dataset manifests/splits, trainer, evaluator, the `ruforecast` CLI, and Linux/fal.ai training assets | Training-only authority; no production activation or sensing-server mutation |
+| `ruforecast-core` | Backend-neutral schemas, invariants, metrics, forecast receipts, and the `Forecaster` trait | No Burn, CUDA, WGPU, provider SDK, sensing-server, or network dependency |
+| `ruforecast-model` | Independent Burn 0.21 patch-mixer architecture and artifact execution | CPU, CUDA, and WGPU are explicit optional features; every backend feature is off by default |
+| `ruforecast-train` | Dataset manifests/splits, trainer, evaluator, the `ruforecast` CLI, and Linux/fal.ai training assets | Training-only authority; no production activation or sensing-server mutation |
 
 This PR does not connect the forecaster to the sensing server. A shadow bridge
 requires a follow-up change after the core contract and evidence receipt have

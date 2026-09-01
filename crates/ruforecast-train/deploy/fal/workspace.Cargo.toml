@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ruview-forecast-core",
-    "crates/ruview-forecast-model",
-    "crates/ruview-forecast-train",
+    "crates/ruforecast-core",
+    "crates/ruforecast-model",
+    "crates/ruforecast-train",
 ]
 
 [workspace.package]
@@ -29,8 +29,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 ed25519-dalek = "2.1"
 proptest = "1.4"
 ruvector-core = "2.3.0"
-ruview-forecast-core = { path = "crates/ruview-forecast-core" }
-ruview-forecast-model = { path = "crates/ruview-forecast-model" }
+ruforecast-core = { path = "crates/ruforecast-core" }
+ruforecast-model = { path = "crates/ruforecast-model" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"

@@ -1,5 +1,5 @@
 [package]
-name = "ruview-forecast-model"
+name = "ruforecast-model"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -16,7 +16,7 @@ wgpu = ["model", "dep:burn-wgpu"]
 ruvector = ["dep:ruvector-core", "dep:tempfile"]
 
 [dependencies]
-ruview-forecast-core = { path = "../ruview-forecast-core" }
+ruforecast-core = { path = "../ruforecast-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
