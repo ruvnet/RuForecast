@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RuForecast — independent, privacy-governed time-series forecasting in Rust</title>
+<meta name="description" content="RuForecast is an independent Rust engine for forecasting ambient/RF sensing signals with honest uncertainty bands, a Burn-based CPU/CUDA/WGPU model, and a cryptographically-verified hyperparameter promotion pipeline. Accuracy research is active and openly tracked." />
+<link rel="canonical" href="https://ruvnet.github.io/RuForecast/" />
+<meta name="robots" content="index,follow" />
+<meta name="theme-color" content="#0B0F14" />
+
+<meta property="og:type" content="website" />
+<meta property="og:title" content="RuForecast — independent, privacy-governed time-series forecasting in Rust" />
+<meta property="og:description" content="A Rust multivariate forecasting engine with honest uncertainty bands, a cryptographically-verified hyperparameter promotion pipeline, and openly-tracked accuracy research." />
+<meta property="og:url" content="https://ruvnet.github.io/RuForecast/" />
+<meta property="og:image" content="https://ruvnet.github.io/RuForecast/assets/hero-screenshot.png" />
+<meta property="og:site_name" content="RuForecast" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="RuForecast — independent, privacy-governed time-series forecasting in Rust" />
+<meta name="twitter:description" content="A Rust multivariate forecasting engine with honest uncertainty bands and a cryptographically-verified promotion pipeline." />
+<meta name="twitter:image" content="https://ruvnet.github.io/RuForecast/assets/hero-screenshot.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;500;700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    --ground: #F1EEE6;
+    --panel: #E7E1D3;
+    --panel-line: #D6CEBA;
+    --text: #161B21;
+    --text-dim: #5B6672;
+    --accent-forecast: #B8721A;
+    --accent-forecast-soft: rgba(184, 114, 26, 0.18);
+    --accent-observed: #128F87;
+    --danger: #A83A2E;
+    --focus: #2E6FE0;
+    --font-display: "Martian Mono", "Courier New", monospace;
+    --font-body: "Work Sans", system-ui, -apple-system, sans-serif;
+    --font-mono: "IBM Plex Mono", "Consolas", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0B0F14;
+      --panel: #121A24;
+      --panel-line: #212C3A;
+      --text: #F3ECDF;
+      --text-dim: #9CA8B4;
+      --accent-forecast: #F2A93B;
+      --accent-forecast-soft: rgba(242, 169, 59, 0.16);
+      --accent-observed: #4FD1C5;
+      --danger: #E2685A;
+      --focus: #6FA8FF;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0B0F14;
+    --panel: #121A24;
+    --panel-line: #212C3A;
+    --text: #F3ECDF;
+    --text-dim: #9CA8B4;
+    --accent-forecast: #F2A93B;
+    --accent-forecast-soft: rgba(242, 169, 59, 0.16);
+    --accent-observed: #4FD1C5;
+    --danger: #E2685A;
+    --focus: #6FA8FF;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  a { color: var(--accent-observed); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+
+  code, .mono, .stat, time, .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-observed);
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 1.6em;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.6;
+  }
+
+  /* ---------- spine canvas ---------- */
+  #spine-wrap {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+  #spine {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  main { position: relative; z-index: 1; }
+
+  .container {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 0 1.75rem;
+  }
+
+  section {
+    padding: clamp(4rem, 10vw, 9rem) 0;
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ---------- hero ---------- */
+  .hero {
+    min-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.6rem;
+    padding-top: 6rem;
+  }
+  .hero h1 {
+    font-size: clamp(2.3rem, 5.4vw, 4.1rem);
+    line-height: 1.05;
+  }
+  .hero h1 .accent { color: var(--accent-forecast); }
+  .hero p.lede {
+    max-width: 40rem;
+    font-size: clamp(1.05rem, 1.6vw, 1.28rem);
+    color: var(--text-dim);
+    max-width: 38ch;
+  }
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+    margin-top: 0.5rem;
+  }
+  .btn {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+    padding: 0.85rem 1.4rem;
+    border-radius: 3px;
+    border: 1px solid var(--panel-line);
+    background: var(--panel);
+    color: var(--text);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }
+  .btn:hover { border-color: var(--accent-observed); transform: translateY(-1px); }
+  .btn.primary {
+    background: var(--accent-forecast);
+    border-color: var(--accent-forecast);
+    color: #14100A;
+  }
+  :root[data-theme="dark"] .btn.primary,
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #14100A; } }
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1.4rem;
+    margin-top: 2.6rem;
+    padding-top: 1.8rem;
+    border-top: 1px solid var(--panel-line);
+    max-width: 40rem;
+  }
+  .hero-stats .stat-value {
+    font-family: var(--font-mono);
+    font-size: 1.5rem;
+    color: var(--accent-observed);
+  }
+  .hero-stats .stat-label {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 0.2rem;
+  }
+
+  /* ---------- section headers ---------- */
+  .section-head {
+    max-width: 34rem;
+    margin-bottom: 2.6rem;
+  }
+  .section-head h2 {
+    font-size: clamp(1.6rem, 3.2vw, 2.3rem);
+    margin-top: 0.6rem;
+  }
+  .section-head p {
+    color: var(--text-dim);
+    margin-top: 0.9rem;
+    max-width: 46ch;
+  }
+
+  /* ---------- feature grid ---------- */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr));
+    gap: 1.1rem;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 6px;
+    padding: 1.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .card h3 { font-size: 1.02rem; color: var(--text); }
+  .card p { color: var(--text-dim); font-size: 0.94rem; margin: 0; }
+  .card .glyph {
+    width: 2.2rem;
+    height: 2.2rem;
+    color: var(--accent-observed);
+  }
+
+  /* ---------- architecture diagram ---------- */
+  .arch-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 2.4rem 0;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+  }
+  .arch-block {
+    flex: 1 1 0;
+    min-width: 9rem;
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    padding: 1rem 0.9rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.35rem;
+  }
+  .arch-block strong { display: block; font-size: 0.86rem; color: var(--accent-forecast); }
+  .arch-arrow {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    padding: 0 0.4rem;
+    color: var(--text-dim);
+  }
+
+  /* ---------- usage / code ---------- */
+  pre {
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 6px;
+    padding: 1.2rem 1.4rem;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+    line-height: 1.65;
+  }
+  pre .cmt { color: var(--text-dim); }
+  pre .fl { color: var(--accent-observed); }
+
+  /* ---------- honesty panel ---------- */
+  .honesty {
+    border: 1px solid var(--accent-forecast);
+    background: var(--accent-forecast-soft);
+    border-radius: 8px;
+    padding: 1.8rem;
+  }
+  .honesty .eyebrow { color: var(--accent-forecast); }
+  .honesty h3 { font-size: 1.15rem; margin-top: 0.5rem; }
+  .honesty p { color: var(--text); margin-top: 0.8rem; }
+  .honesty ul { margin: 1rem 0 0; padding-left: 1.2rem; color: var(--text-dim); }
+  .honesty li { margin-bottom: 0.4rem; }
+
+  footer {
+    border-top: 1px solid var(--panel-line);
+    padding: 3rem 0 4rem;
+    color: var(--text-dim);
+    font-size: 0.88rem;
+  }
+  footer a { color: var(--text-dim); }
+  footer .foot-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  ::selection { background: var(--accent-forecast-soft); color: var(--text); }
+</style>
+</head>
+<body>
+
+<div id="spine-wrap" aria-hidden="true"><canvas id="spine"></canvas></div>
+
+<a href="#main" class="visually-hidden">Skip to content</a>
+
+<main id="main">
+  <div class="container">
+
+    <section class="hero">
+      <p class="eyebrow">Rust · privacy-governed · open research</p>
+      <h1>Forecast the signal.<br />Show your <span class="accent">uncertainty</span>,<br />not just your answer.</h1>
+      <p class="lede">RuForecast is an independent multivariate forecasting engine for ambient and RF-derived sensing signals — built to predict a range of plausible futures, not a single confident guess, and to prove every claim it makes.</p>
+      <div class="hero-actions">
+        <a class="btn primary" href="https://github.com/ruvnet/RuForecast">View on GitHub</a>
+        <a class="btn" href="#usage">Quickstart</a>
+        <a class="btn" href="#honesty">Research status</a>
+      </div>
+      <div class="hero-stats">
+        <div>
+          <div class="stat-value">3</div>
+          <div class="stat-label">Rust crates<br />core · model · train</div>
+        </div>
+        <div>
+          <div class="stat-value">7</div>
+          <div class="stat-label">forecast quantiles<br />per prediction</div>
+        </div>
+        <div>
+          <div class="stat-value">CPU/CUDA/WGPU</div>
+          <div class="stat-label">Burn backends,<br />one codebase</div>
+        </div>
+        <div>
+          <div class="stat-value">0</div>
+          <div class="stat-label">unproven accuracy<br />claims made</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="what" class="reveal">
+      <div class="section-head">
+        <p class="eyebrow">What it does</p>
+        <h2>One model, several coupled signals, honest ranges.</h2>
+        <p>Feed RuForecast a window of recent readings across several correlated variates — heart rate, breathing rate, signal quality, presence, motion — and it predicts what each one does next, as a distribution, not a point.</p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12h4l2-7 4 14 2-9 2 2h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h3>Multivariate, coupled</h3>
+          <p>Variates are modeled together, not one signal at a time — permutation-equivariant attention lets it handle any number of correlated inputs.</p>
+        </div>
+        <div class="card">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 17l4-6 4 3 4-8 6 11" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 21h18" stroke-linecap="round"/></svg>
+          <h3>Quantiles, not one number</h3>
+          <p>Every prediction ships as seven ordered quantiles — an honest spread of plausible outcomes, ready for a real 80% interval, not a false-confidence point estimate.</p>
+        </div>
+        <div class="card">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11" stroke-linecap="round"/></svg>
+          <h3>Missing data, handled</h3>
+          <p>Real sensors drop frames. RuForecast's masking is a first-class input, not a preprocessing afterthought — gaps are modeled, not imputed away silently.</p>
+        </div>
+        <div class="card">
+          <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" stroke-linejoin="round"/></svg>
+          <h3>Typed privacy policy</h3>
+          <p>Every training run carries a declared privacy class, tenant scope, retention window and consent record in its own type — not a comment, an enforced field.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture" class="reveal">
+      <div class="section-head">
+        <p class="eyebrow">How it's built</p>
+        <h2>A clean-room architecture, Burn-native, backend-neutral.</h2>
+        <p>No borrowed model weights, no wrapped third-party checkpoint. Masked patch tokens, gated depthwise temporal mixing, permutation-equivariant variate attention, and an ordered-quantile head — composed from generic primitives, described in full in the project's own ADRs.</p>
+      </div>
+      <div class="arch-row">
+        <div class="arch-block"><strong>ruforecast-core</strong>Series, splits, metrics, privacy policy — Burn-free contracts</div>
+        <div class="arch-arrow">&rarr;</div>
+        <div class="arch-block"><strong>ruforecast-model</strong>The network itself — masked patches, temporal mixing, quantile head</div>
+        <div class="arch-arrow">&rarr;</div>
+        <div class="arch-block"><strong>ruforecast-train</strong>Local + fal.ai orchestration, the <code>ruforecast</code> CLI</div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Three backends, one model</h3>
+          <p>CPU (ndarray) for portability and CI, CUDA for Linux/NVIDIA training, WGPU for cross-platform GPU inference — same architecture, feature-gated at compile time.</p>
+        </div>
+        <div class="card">
+          <h3><code>#![forbid(unsafe_code)]</code></h3>
+          <p>The model crate carries zero unsafe blocks. Configuration and artifact validation are exposed even with Burn disabled entirely, so the rest of the workspace never has to pull in a GPU toolchain to type-check against it.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="governance" class="reveal">
+      <div class="section-head">
+        <p class="eyebrow">How improvements get trusted</p>
+        <h2>A hyperparameter can't promote itself.</h2>
+        <p>RuForecast pairs with two governed pipelines built alongside it: Darwin Mode searches the hyperparameter space; Autogenous cryptographically verifies any candidate before it's trusted — never the other way around.</p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Darwin Mode — search</h3>
+          <p>A numeric-genome evolution engine mutates and scores candidate hyperparameter sets against held-out weighted quantile loss, evaluated across multiple independent synthetic corpora — not one fixed dataset a search could quietly overfit to.</p>
+        </div>
+        <div class="card">
+          <h3>Autogenous — verify</h3>
+          <p>A candidate that "wins" a search still needs signed evaluation receipts from independent judges, on out-of-search data, beating its parent by a real margin, before a promotion gate will even consider it. No generated candidate promotes itself.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="usage" class="reveal">
+      <div class="section-head">
+        <p class="eyebrow">Usage</p>
+        <h2>Train and evaluate locally, in three commands.</h2>
+        <p>The <code>ruforecast</code> CLI trains from typed local JSONL, scores against last-value and seasonal-naive baselines, and reports weighted quantile loss, per-horizon breakdown, interval coverage, and missingness — real numbers, not a demo mode.</p>
+      </div>
+      <pre><code><span class="cmt"># build the CLI</span>
+cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
+
+<span class="cmt"># generate a synthetic dataset and train a candidate</span>
+./ruforecast prepare-synthetic-dataset --directory ./run --train-windows 24
+./ruforecast train-local --request ./run/train-local.toml \
+  --dataset-root ./run --output ./run/artifacts
+
+<span class="cmt"># score it against the trivial baselines it has to beat</span>
+./ruforecast evaluate --candidate ./run/artifacts/<span class="fl">*</span>/model.mpk \
+  --test-jsonl ./run/test.jsonl</code></pre>
+    </section>
+
+    <section id="honesty" class="reveal">
+      <div class="section-head">
+        <p class="eyebrow">Benefits</p>
+        <h2>What you actually get.</h2>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>No opaque forecasts</h3>
+          <p>Uncertainty is a first-class output, not an afterthought — downstream systems can act on a range, abstain on low confidence, or flag a widening interval as a signal in itself.</p>
+        </div>
+        <div class="card">
+          <h3>Governed by construction</h3>
+          <p>Privacy class, retention, and consent are typed fields checked before training runs, not policy documents someone has to remember to follow.</p>
+        </div>
+        <div class="card">
+          <h3>Verifiable, not just tested</h3>
+          <p>A hyperparameter improvement carries a signed, replayable receipt — anyone can independently re-check that a promoted candidate really did beat its parent.</p>
+        </div>
+        <div class="card">
+          <h3>Runs where your hardware is</h3>
+          <p>The same model compiles for a CI runner's CPU, a training rig's CUDA GPU, or a portable WGPU target — pick the backend, not a different codebase.</p>
+        </div>
+      </div>
+
+      <div class="honesty" style="margin-top: 2.4rem;">
+        <p class="eyebrow">Research status — read this before you trust a number</p>
+        <h3>No configuration has yet been shown to reliably beat trivial forecasting baselines out-of-sample.</h3>
+        <p>Two independent hyperparameter searches this project ran — each cryptographically verified against fresh, out-of-search synthetic data — found that at the current small training-corpus scale, dataset noise dominates any real hyperparameter effect. Neither search's "winner" held up under independent verification.</p>
+        <ul>
+          <li>This is reported here on purpose, not buried in an issue tracker — the project's standing rule is that every accuracy claim is tagged <strong>MEASURED</strong>, <strong>CLAIMED</strong>, or <strong>SYNTHETIC</strong>, and nothing is claimed as proven until it is.</li>
+          <li>The credible next lever is more real training data, not further search on a small synthetic fixture — that work is active.</li>
+          <li>Full evidence, both search rounds, and the retraction are recorded in <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/benchmarks/ruforecast.md"><code>docs/benchmarks/ruforecast.md</code></a>.</li>
+        </ul>
+      </div>
+    </section>
+
+  </div>
+
+  <footer>
+    <div class="container foot-row">
+      <div>
+        <strong style="font-family: var(--font-display); font-size: 0.95rem;">RuForecast</strong>
+        <div style="margin-top: 0.3rem;">MIT OR Apache-2.0 · <a href="https://github.com/ruvnet/RuForecast">github.com/ruvnet/RuForecast</a></div>
+      </div>
+      <div>
+        <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/benchmarks/ruforecast.md">Benchmark evidence</a> ·
+        <a href="https://github.com/ruvnet/RuForecast/tree/main/docs/adr">ADRs</a> ·
+        <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/security/ruview-forecast-threat-model.md">Threat model</a>
+      </div>
+    </div>
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- theme: system already handled by CSS; no manual toggle needed ----
+
+  // ---- reveal on scroll ----
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var revealEls = document.querySelectorAll(".reveal");
+  if (reduceMotion || !("IntersectionObserver" in window)) {
+    revealEls.forEach(function (el) { el.classList.add("is-visible"); });
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+    revealEls.forEach(function (el) { io.observe(el); });
+  }
+
+  // ---- spine canvas: an observed trace that widens into a forecast fan ----
+  var canvas = document.getElementById("spine");
+  var ctx = canvas.getContext("2d");
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function readColor(varName) {
+    return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  }
+
+  function resize() {
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(document.documentElement.scrollHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = document.documentElement.scrollHeight + "px";
+  }
+
+  // A single seeded pseudo-random signal so the trace looks like real telemetry,
+  // not a smooth decorative curve, and is stable across resizes/reflows.
+  function seededSignal(n, seed) {
+    var s = seed;
+    function rand() {
+      s = (s * 1103515245 + 12345) % 2147483648;
+      return s / 2147483648;
+    }
+    var v = [];
+    var acc = 0;
+    for (var i = 0; i < n; i++) {
+      acc += (rand() - 0.5) * 0.9;
+      acc *= 0.94;
+      v.push(acc + Math.sin(i * 0.05) * 0.5);
+    }
+    return v;
+  }
+
+  var samples = seededSignal(1400, 42);
+
+  function draw() {
+    var w = window.innerWidth;
+    var h = document.documentElement.scrollHeight;
+    var docHeight = Math.max(h - window.innerHeight, 1);
+    var scrollFrac = window.scrollY / docHeight;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var cx = w * 0.5;
+    var span = Math.min(w * 0.34, 220);
+    var observedColor = readColor("--accent-observed") || "#4FD1C5";
+    var forecastColor = readColor("--accent-forecast") || "#F2A93B";
+
+    // widen the "quantile fan" through the architecture/governance section (~28%-62% scroll)
+    var fanStart = 0.24, fanPeak = 0.44, fanEnd = 0.64, fanTailNarrow = 0.9;
+
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    var n = samples.length;
+    for (var i = 0; i < n; i++) {
+      var t = i / (n - 1);
+      var y = t * h;
+      var x = cx + samples[i] * span * 0.55;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = observedColor;
+    ctx.globalAlpha = 0.55;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // translucent fan band, amplitude driven by scroll position through the fan zone
+    ctx.beginPath();
+    var upper = [];
+    var lower = [];
+    for (var j = 0; j < n; j++) {
+      var tj = j / (n - 1);
+      var local;
+      if (tj < fanStart || tj > fanTailNarrow) local = 0.06;
+      else if (tj < fanPeak) local = 0.06 + (tj - fanStart) / (fanPeak - fanStart) * 0.94;
+      else if (tj < fanEnd) local = 1;
+      else local = 1 - (tj - fanEnd) / (fanTailNarrow - fanEnd) * 0.94;
+      local = Math.max(0.05, Math.min(1, local));
+      var yy = tj * h;
+      var baseX = cx + samples[j] * span * 0.55;
+      var amp = span * 0.85 * local;
+      upper.push([baseX + amp, yy]);
+      lower.push([baseX - amp, yy]);
+    }
+    for (var k = 0; k < upper.length; k++) {
+      if (k === 0) ctx.moveTo(upper[k][0], upper[k][1]); else ctx.lineTo(upper[k][0], upper[k][1]);
+    }
+    for (var m = lower.length - 1; m >= 0; m--) ctx.lineTo(lower[m][0], lower[m][1]);
+    ctx.closePath();
+    ctx.fillStyle = forecastColor;
+    ctx.globalAlpha = 0.1;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // playhead marker at current scroll position
+    var headY = Math.min(scrollFrac, 1) * h;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = forecastColor;
+    ctx.fill();
+  }
+
+  var raf = null;
+  function schedule() {
+    if (raf) return;
+    raf = requestAnimationFrame(function () { raf = null; draw(); });
+  }
+
+  window.addEventListener("scroll", schedule, { passive: true });
+  window.addEventListener("resize", function () { resize(); schedule(); });
+
+  resize();
+  draw();
+})();
+</script>
+
+</body>
+</html>
