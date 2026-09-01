@@ -123,15 +123,15 @@
     opacity: 0.6;
   }
 
-  /* ---------- ambient field + spine canvases ---------- */
-  #field-wrap, #spine-wrap {
+  /* ---------- ambient background: WebGL scene, or its 2D fallback ---------- */
+  #scene3d-wrap, #field-wrap {
     position: fixed;
     inset: 0;
     z-index: 0;
     pointer-events: none;
     overflow: hidden;
   }
-  #field, #spine {
+  #scene3d, #field {
     display: block;
     width: 100%;
     height: 100%;
@@ -399,8 +399,8 @@
 </head>
 <body>
 
-<div id="field-wrap" aria-hidden="true"><canvas id="field"></canvas></div>
-<div id="spine-wrap" aria-hidden="true"><canvas id="spine"></canvas></div>
+<div id="scene3d-wrap" aria-hidden="true"><canvas id="scene3d"></canvas></div>
+<div id="field-wrap" aria-hidden="true" style="display:none;"><canvas id="field"></canvas></div>
 
 <a href="#main" class="visually-hidden">Skip to content</a>
 
@@ -843,8 +843,10 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
     });
   })();
 
-  // ---- ambient field: faint drifting CSI-subcarrier traces behind everything ----
-  (function () {
+  // ---- 2D fallback field: faint drifting CSI-subcarrier traces behind everything.
+  //      Only started if the WebGL scene below fails to initialize (no WebGL context,
+  //      module import blocked, etc.) — see window.__RF_start2DFallback below. ----
+  window.__RF_start2DFallback = function () {
     var fcanvas = document.getElementById("field");
     var fctx = fcanvas.getContext("2d");
     var fdpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -935,122 +937,331 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
     } else {
       requestAnimationFrame(loop);
     }
-  })();
+  };
+  // Not called yet — the module script below tries the real WebGL scene first
+  // and only invokes window.__RF_start2DFallback() if that fails.
+})();
+</script>
 
-  // ---- spine canvas: an observed trace that widens into a forecast fan ----
-  var canvas = document.getElementById("spine");
-  var ctx = canvas.getContext("2d");
-  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+<script type="module">
+// ---- WebGL "signal field" scene: a 3D field of sensor nodes plus a single
+// observed-trace ribbon that widens into a translucent quantile fan as the
+// page scrolls through the architecture/governance sections — the same
+// uncertainty-widens-here narrative the old 2D spine carried, now with real
+// depth parallax from true perspective rather than simulated layer speeds.
+// Falls back to window.__RF_start2DFallback() (defined in the classic script
+// above) on any WebGL/module failure, or if the browser has no WebGL at all.
+(async function () {
+  "use strict";
 
-  function readColor(varName) {
-    return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  function fallbackTo2D(reason) {
+    var scene3dWrap = document.getElementById("scene3d-wrap");
+    var fieldWrap = document.getElementById("field-wrap");
+    if (scene3dWrap) scene3dWrap.style.display = "none";
+    if (fieldWrap) fieldWrap.style.display = "block";
+    if (typeof window.__RF_start2DFallback === "function") {
+      window.__RF_start2DFallback();
+    }
+    if (window.console && reason) console.info("[ruforecast] 3D scene unavailable, using 2D fallback:", reason);
   }
 
-  function resize() {
-    canvas.width = Math.floor(window.innerWidth * dpr);
-    canvas.height = Math.floor(document.documentElement.scrollHeight * dpr);
-    canvas.style.width = window.innerWidth + "px";
-    canvas.style.height = document.documentElement.scrollHeight + "px";
+  // Detect WebGL before even trying to import three.js — no point paying for
+  // a ~600KB module fetch on a browser that can't render it anyway.
+  function hasWebGL() {
+    try {
+      var c = document.createElement("canvas");
+      return !!(window.WebGLRenderingContext && (c.getContext("webgl") || c.getContext("experimental-webgl")));
+    } catch (e) {
+      return false;
+    }
+  }
+  if (!hasWebGL()) { fallbackTo2D("no WebGL context available"); return; }
+
+  var THREE;
+  try {
+    THREE = await import("https://unpkg.com/three@0.169.0/build/three.module.js");
+  } catch (e) {
+    fallbackTo2D("three.js module import failed: " + e);
+    return;
   }
 
-  // A single seeded pseudo-random signal so the trace looks like real telemetry,
-  // not a smooth decorative curve, and is stable across resizes/reflows.
-  function seededSignal(n, seed) {
+  var canvas = document.getElementById("scene3d");
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var isNarrow = window.innerWidth < 640;
+
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: !isNarrow, powerPreference: "low-power" });
+  } catch (e) {
+    fallbackTo2D("WebGLRenderer construction failed: " + e);
+    return;
+  }
+  var dpr = Math.min(window.devicePixelRatio || 1, isNarrow ? 1.5 : 2);
+  renderer.setPixelRatio(dpr);
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(52, 1, 0.5, 400);
+
+  function readColor(varName, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    return v || fallback;
+  }
+  var palette = { ground: "#0B0F14", observed: "#4FD1C5", forecast: "#F2A93B" };
+  function refreshPalette() {
+    palette.ground = readColor("--ground", "#0B0F14");
+    palette.observed = readColor("--accent-observed", "#4FD1C5");
+    palette.forecast = readColor("--accent-forecast", "#F2A93B");
+    scene.background = null; // stay transparent so the CSS ground color shows beneath
+  }
+  refreshPalette();
+
+  // ---------- lighting: soft ambient + one tinted directional, just enough for
+  //             the ribbon's material to read as real 3D relief, not a flat decal ----------
+  var hemi = new THREE.HemisphereLight(0xbfe9e4, 0x0b0f14, 0.65);
+  scene.add(hemi);
+  var dir = new THREE.DirectionalLight(0xffffff, 0.55);
+  dir.position.set(6, 10, 8);
+  scene.add(dir);
+
+  // ---------- a seeded 3D path: the same deterministic-telemetry idea as the old
+  //             2D seededSignal, extended into x/y wiggle with z running the full
+  //             length of the page so the camera can travel "through" it ----------
+  function seeded(seed) {
     var s = seed;
-    function rand() {
+    return function () {
       s = (s * 1103515245 + 12345) % 2147483648;
       return s / 2147483648;
+    };
+  }
+  var PATH_N = 420;
+  var PATH_LEN = 260; // world units of z the ribbon spans, mapped 1:1 to scroll progress
+  var rand = seeded(42);
+  var pathPoints = [];
+  (function buildPath() {
+    var ax = 0, ay = 0;
+    for (var i = 0; i < PATH_N; i++) {
+      var t = i / (PATH_N - 1);
+      ax += (rand() - 0.5) * 0.9; ax *= 0.94;
+      ay += (rand() - 0.5) * 0.9; ay *= 0.94;
+      var x = ax * 3.2 + Math.sin(i * 0.05) * 1.6;
+      var y = ay * 2.4 + Math.cos(i * 0.041) * 1.1;
+      var z = -t * PATH_LEN;
+      pathPoints.push(new THREE.Vector3(x, y, z));
     }
-    var v = [];
-    var acc = 0;
-    for (var i = 0; i < n; i++) {
-      acc += (rand() - 0.5) * 0.9;
-      acc *= 0.94;
-      v.push(acc + Math.sin(i * 0.05) * 0.5);
-    }
-    return v;
+  })();
+  var pathCurve = new THREE.CatmullRomCurve3(pathPoints, false, "catmullrom", 0.4);
+
+  // fan profile: identical zones to the old 2D spine (widens through architecture
+  // + governance, narrows again at the honest research-status section)
+  var fanStart = 0.24, fanPeak = 0.44, fanEnd = 0.64, fanTailNarrow = 0.9;
+  function fanLocal(t) {
+    var v;
+    if (t < fanStart || t > fanTailNarrow) v = 0.05;
+    else if (t < fanPeak) v = 0.05 + (t - fanStart) / (fanPeak - fanStart) * 0.95;
+    else if (t < fanEnd) v = 1;
+    else v = 1 - (t - fanEnd) / (fanTailNarrow - fanEnd) * 0.95;
+    return Math.max(0.04, Math.min(1, v));
   }
 
-  var samples = seededSignal(1400, 42);
-
-  function draw() {
-    var w = window.innerWidth;
-    var h = document.documentElement.scrollHeight;
-    var docHeight = Math.max(h - window.innerHeight, 1);
-    var scrollFrac = window.scrollY / docHeight;
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-
-    var cx = w * 0.5;
-    var span = Math.min(w * 0.34, 220);
-    var observedColor = readColor("--accent-observed") || "#4FD1C5";
-    var forecastColor = readColor("--accent-forecast") || "#F2A93B";
-
-    // widen the "quantile fan" through the architecture/governance section (~28%-62% scroll)
-    var fanStart = 0.24, fanPeak = 0.44, fanEnd = 0.64, fanTailNarrow = 0.9;
-
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    var n = samples.length;
-    for (var i = 0; i < n; i++) {
-      var t = i / (n - 1);
-      var y = t * h;
-      var x = cx + samples[i] * span * 0.55;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  // ---------- variable-radius ribbon: build our own tube geometry (rather than
+  //             THREE.TubeGeometry, whose radius is constant) so tube width can
+  //             follow the fan profile above at every segment ----------
+  var TUBULAR_SEGMENTS = 300;
+  var RADIAL_SEGMENTS = 8;
+  var BASE_RADIUS = 0.32;
+  var frames = pathCurve.computeFrenetFrames(TUBULAR_SEGMENTS, false);
+  var ribbonGeom = new THREE.BufferGeometry();
+  (function buildRibbon() {
+    var positions = [];
+    var normals = [];
+    var indices = [];
+    for (var i = 0; i <= TUBULAR_SEGMENTS; i++) {
+      var u = i / TUBULAR_SEGMENTS;
+      var center = pathCurve.getPointAt(u);
+      var N = frames.normals[i];
+      var B = frames.binormals[i];
+      var radius = BASE_RADIUS * (0.3 + fanLocal(u) * 0.85);
+      for (var j = 0; j <= RADIAL_SEGMENTS; j++) {
+        var v = (j / RADIAL_SEGMENTS) * Math.PI * 2;
+        var sin = Math.sin(v), cos = -Math.cos(v);
+        var nx = cos * N.x + sin * B.x;
+        var ny = cos * N.y + sin * B.y;
+        var nz = cos * N.z + sin * B.z;
+        positions.push(center.x + radius * nx, center.y + radius * ny, center.z + radius * nz);
+        normals.push(nx, ny, nz);
+      }
     }
-    ctx.strokeStyle = observedColor;
-    ctx.globalAlpha = 0.55;
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // translucent fan band, amplitude driven by scroll position through the fan zone
-    ctx.beginPath();
-    var upper = [];
-    var lower = [];
-    for (var j = 0; j < n; j++) {
-      var tj = j / (n - 1);
-      var local;
-      if (tj < fanStart || tj > fanTailNarrow) local = 0.06;
-      else if (tj < fanPeak) local = 0.06 + (tj - fanStart) / (fanPeak - fanStart) * 0.94;
-      else if (tj < fanEnd) local = 1;
-      else local = 1 - (tj - fanEnd) / (fanTailNarrow - fanEnd) * 0.94;
-      local = Math.max(0.05, Math.min(1, local));
-      var yy = tj * h;
-      var baseX = cx + samples[j] * span * 0.55;
-      var amp = span * 0.85 * local;
-      upper.push([baseX + amp, yy]);
-      lower.push([baseX - amp, yy]);
+    for (var i2 = 0; i2 < TUBULAR_SEGMENTS; i2++) {
+      for (var j2 = 0; j2 < RADIAL_SEGMENTS; j2++) {
+        var a = (RADIAL_SEGMENTS + 1) * i2 + j2;
+        var b = (RADIAL_SEGMENTS + 1) * (i2 + 1) + j2;
+        var c = (RADIAL_SEGMENTS + 1) * (i2 + 1) + j2 + 1;
+        var d = (RADIAL_SEGMENTS + 1) * i2 + j2 + 1;
+        indices.push(a, b, d, b, c, d);
+      }
     }
-    for (var k = 0; k < upper.length; k++) {
-      if (k === 0) ctx.moveTo(upper[k][0], upper[k][1]); else ctx.lineTo(upper[k][0], upper[k][1]);
-    }
-    for (var m = lower.length - 1; m >= 0; m--) ctx.lineTo(lower[m][0], lower[m][1]);
-    ctx.closePath();
-    ctx.fillStyle = forecastColor;
-    ctx.globalAlpha = 0.1;
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    ribbonGeom.setIndex(indices);
+    ribbonGeom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    ribbonGeom.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  })();
+  var ribbonMat = new THREE.MeshStandardMaterial({
+    color: palette.forecast, transparent: true, opacity: 0.14, roughness: 0.6, metalness: 0.05,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  var ribbonMesh = new THREE.Mesh(ribbonGeom, ribbonMat);
+  scene.add(ribbonMesh);
 
-    // playhead marker at current scroll position
-    var headY = Math.min(scrollFrac, 1) * h;
-    ctx.beginPath();
-    ctx.arc(cx, headY, 3.2, 0, Math.PI * 2);
-    ctx.fillStyle = forecastColor;
-    ctx.fill();
+  // thin bright core line — the "observed trace" itself, riding the same path
+  var coreGeom = new THREE.TubeGeometry(pathCurve, TUBULAR_SEGMENTS, 0.032, 5, false);
+  var coreMat = new THREE.MeshBasicMaterial({ color: palette.observed, transparent: true, opacity: 0.45 });
+  var coreMesh = new THREE.Mesh(coreGeom, coreMat);
+  scene.add(coreMesh);
+
+  // ---------- ambient sensor-node field: a loose cloud of small emissive nodes
+  //             around the ribbon's full length, drifting gently — the multivariate
+  //             "many correlated signals" idea, filling out the 3D depth the camera
+  //             actually travels through ----------
+  var NODE_COUNT = isNarrow ? 70 : 160;
+  var nodeGeom = new THREE.IcosahedronGeometry(0.16, 0);
+  var nodeMat = new THREE.MeshBasicMaterial({ color: palette.observed, transparent: true, opacity: 0.5 });
+  var nodeMesh = new THREE.InstancedMesh(nodeGeom, nodeMat, NODE_COUNT);
+  var nodeBase = [];
+  var nodeRand = seeded(97);
+  var nodeDummy = new THREE.Object3D();
+  for (var ni = 0; ni < NODE_COUNT; ni++) {
+    var bx = (nodeRand() - 0.5) * 20;
+    var by = (nodeRand() - 0.5) * 12;
+    var bz = -nodeRand() * PATH_LEN;
+    nodeBase.push({ x: bx, y: by, z: bz, phase: nodeRand() * Math.PI * 2, amp: 0.4 + nodeRand() * 0.5 });
+    nodeDummy.position.set(bx, by, bz);
+    var scale = 0.6 + nodeRand() * 0.9;
+    nodeDummy.scale.setScalar(scale);
+    nodeDummy.updateMatrix();
+    nodeMesh.setMatrixAt(ni, nodeDummy.matrix);
   }
-
-  var raf = null;
-  function schedule() {
-    if (raf) return;
-    raf = requestAnimationFrame(function () { raf = null; draw(); });
+  scene.add(nodeMesh);
+  // second, amber-tinted node layer for a bit of chromatic depth separation
+  var nodeMat2 = new THREE.MeshBasicMaterial({ color: palette.forecast, transparent: true, opacity: 0.4 });
+  var nodeMesh2 = new THREE.InstancedMesh(nodeGeom, nodeMat2, Math.round(NODE_COUNT * 0.4));
+  var nodeBase2 = [];
+  for (var ni2 = 0; ni2 < nodeMesh2.count; ni2++) {
+    var bx2 = (nodeRand() - 0.5) * 26;
+    var by2 = (nodeRand() - 0.5) * 15;
+    var bz2 = -nodeRand() * PATH_LEN;
+    nodeBase2.push({ x: bx2, y: by2, z: bz2, phase: nodeRand() * Math.PI * 2, amp: 0.4 + nodeRand() * 0.6 });
+    nodeDummy.position.set(bx2, by2, bz2);
+    nodeDummy.scale.setScalar(0.5 + nodeRand() * 0.7);
+    nodeDummy.updateMatrix();
+    nodeMesh2.setMatrixAt(ni2, nodeDummy.matrix);
   }
+  scene.add(nodeMesh2);
 
-  window.addEventListener("scroll", schedule, { passive: true });
-  window.addEventListener("resize", function () { resize(); schedule(); });
-
+  // ---------- sizing ----------
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
   resize();
-  draw();
+
+  // ---------- scroll-linked camera: travels the ribbon's z-length as the page
+  //             scrolls, looking a little ahead along the path — genuine depth
+  //             parallax (near nodes cross the frame faster than far ones)
+  //             rather than simulated per-layer speeds ----------
+  var camTarget = new THREE.Vector3();
+  var lookTarget = new THREE.Vector3();
+  var camCurrent = new THREE.Vector3(0, 0, 6);
+  var lookCurrent = new THREE.Vector3(0, 0, -4);
+  function scrollFrac() {
+    var doc = document.documentElement;
+    var max = Math.max(doc.scrollHeight - window.innerHeight, 1);
+    return Math.min(1, Math.max(0, window.scrollY / max));
+  }
+  function updateCameraTargets() {
+    var t = scrollFrac();
+    var u = Math.min(0.998, t);
+    var p = pathCurve.getPointAt(u);
+    var ahead = pathCurve.getPointAt(Math.min(0.999, u + 0.02));
+    // orbit slightly off-path so the ribbon reads as a real object beside the
+    // camera, not something the camera is welded inside of
+    var offsetAngle = t * Math.PI * 0.6;
+    camTarget.set(p.x + Math.sin(offsetAngle) * 6.5, p.y + 1.6 + Math.cos(offsetAngle * 0.7) * 0.6, p.z + 15);
+    lookTarget.copy(ahead);
+  }
+
+  refreshPalette();
+  function applyPaletteToMaterials() {
+    ribbonMat.color.set(palette.forecast);
+    coreMat.color.set(palette.observed);
+    nodeMat.color.set(palette.observed);
+    nodeMat2.color.set(palette.forecast);
+  }
+  applyPaletteToMaterials();
+
+  var t0 = 0;
+  function animateNodes(elapsedMs) {
+    var tt = elapsedMs * 0.0006;
+    for (var i = 0; i < nodeBase.length; i++) {
+      var b = nodeBase[i];
+      nodeDummy.position.set(b.x, b.y + Math.sin(tt + b.phase) * b.amp, b.z);
+      nodeDummy.scale.setScalar(0.6);
+      nodeDummy.updateMatrix();
+      nodeMesh.setMatrixAt(i, nodeDummy.matrix);
+    }
+    nodeMesh.instanceMatrix.needsUpdate = true;
+    for (var i2 = 0; i2 < nodeBase2.length; i2++) {
+      var b2 = nodeBase2[i2];
+      nodeDummy.position.set(b2.x, b2.y + Math.cos(tt * 0.8 + b2.phase) * b2.amp, b2.z);
+      nodeDummy.scale.setScalar(0.5);
+      nodeDummy.updateMatrix();
+      nodeMesh2.setMatrixAt(i2, nodeDummy.matrix);
+    }
+    nodeMesh2.instanceMatrix.needsUpdate = true;
+  }
+
+  function renderFrame() {
+    camCurrent.lerp(camTarget, 0.06);
+    lookCurrent.lerp(lookTarget, 0.06);
+    camera.position.copy(camCurrent);
+    camera.lookAt(lookCurrent);
+    renderer.render(scene, camera);
+  }
+
+  updateCameraTargets();
+  camCurrent.copy(camTarget);
+  lookCurrent.copy(lookTarget);
+
+  if (reduceMotion) {
+    // one static, well-composed frame — no RAF loop, no node drift
+    renderFrame();
+  } else {
+    var running = true;
+    var raf = null;
+    function loop(now) {
+      if (!running) return;
+      updateCameraTargets();
+      animateNodes(now);
+      renderFrame();
+      raf = requestAnimationFrame(loop);
+    }
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { running = false; if (raf) cancelAnimationFrame(raf); }
+      else { running = true; raf = requestAnimationFrame(loop); }
+    });
+    window.addEventListener("scroll", function () { /* consumed in loop via scrollFrac() */ }, { passive: true });
+    window.addEventListener("resize", function () { resize(); updateCameraTargets(); if (reduceMotion) renderFrame(); });
+    raf = requestAnimationFrame(loop);
+  }
+
+  // Recompute theme-dependent colors when the OS theme flips mid-session.
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      refreshPalette();
+      applyPaletteToMaterials();
+      if (reduceMotion) renderFrame();
+    });
+  }
 })();
 </script>
 
