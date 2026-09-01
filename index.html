@@ -123,20 +123,68 @@
     opacity: 0.6;
   }
 
-  /* ---------- spine canvas ---------- */
-  #spine-wrap {
+  /* ---------- ambient field + spine canvases ---------- */
+  #field-wrap, #spine-wrap {
     position: fixed;
     inset: 0;
     z-index: 0;
     pointer-events: none;
+    overflow: hidden;
   }
-  #spine {
+  #field, #spine {
     display: block;
     width: 100%;
     height: 100%;
   }
 
   main { position: relative; z-index: 1; }
+
+  /* ---------- staggered item reveal (cards, diagrams) ---------- */
+  .reveal-item {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    transition-delay: calc(var(--stagger, 0) * 90ms);
+  }
+  .reveal-item.is-visible { opacity: 1; transform: translateY(0); }
+  .grid-2 .card:nth-child(1) { --stagger: 0; }
+  .grid-2 .card:nth-child(2) { --stagger: 1; }
+  .grid-2 .card:nth-child(3) { --stagger: 2; }
+  .grid-2 .card:nth-child(4) { --stagger: 3; }
+
+  /* ---------- mechanism diagrams ---------- */
+  figure.mech {
+    margin: 2.6rem 0;
+    padding: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  figure.mech svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  /* diagrams stay at a legible minimum size and scroll horizontally below it,
+     rather than shrinking their labels past readability on narrow screens */
+  figure.mech svg.dg-wide { min-width: 640px; }
+  figure.mech svg.dg-med { min-width: 460px; }
+  figure.mech figcaption {
+    margin-top: 0.9rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    max-width: 46ch;
+  }
+  .dg-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+  }
+  .dg-caplabel {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.02em;
+  }
 
   .container {
     max-width: 62rem;
@@ -351,6 +399,7 @@
 </head>
 <body>
 
+<div id="field-wrap" aria-hidden="true"><canvas id="field"></canvas></div>
 <div id="spine-wrap" aria-hidden="true"><canvas id="spine"></canvas></div>
 
 <a href="#main" class="visually-hidden">Skip to content</a>
@@ -394,22 +443,22 @@
         <p>Feed RuForecast a window of recent readings across several correlated variates — heart rate, breathing rate, signal quality, presence, motion — and it predicts what each one does next, as a distribution, not a point.</p>
       </div>
       <div class="grid-2">
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 0;">
           <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12h4l2-7 4 14 2-9 2 2h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <h3>Multivariate, coupled</h3>
           <p>Variates are modeled together, not one signal at a time — permutation-equivariant attention lets it handle any number of correlated inputs.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 1;">
           <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 17l4-6 4 3 4-8 6 11" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 21h18" stroke-linecap="round"/></svg>
           <h3>Quantiles, not one number</h3>
           <p>Every prediction ships as seven ordered quantiles — an honest spread of plausible outcomes, ready for a real 80% interval, not a false-confidence point estimate.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 2;">
           <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11" stroke-linecap="round"/></svg>
           <h3>Missing data, handled</h3>
           <p>Real sensors drop frames. RuForecast's masking is a first-class input, not a preprocessing afterthought — gaps are modeled, not imputed away silently.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 3;">
           <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" stroke-linejoin="round"/></svg>
           <h3>Typed privacy policy</h3>
           <p>Every training run carries a declared privacy class, tenant scope, retention window and consent record in its own type — not a comment, an enforced field.</p>
@@ -430,12 +479,105 @@
         <div class="arch-arrow">&rarr;</div>
         <div class="arch-block"><strong>ruforecast-train</strong>Local + fal.ai orchestration, the <code>ruforecast</code> CLI</div>
       </div>
+
+      <figure class="mech reveal-item" style="--stagger: 0;">
+        <svg class="dg-wide" viewBox="0 0 920 210" role="img" aria-label="The forecast network's real data path: a context window of readings, with missing values marked, becomes masked patch tokens, is mixed independently per signal by gated depthwise convolution, is cross-referenced between signals by permutation-equivariant attention, and decodes into seven ordered quantiles per future step." style="color: var(--text-dim);">
+          <defs>
+            <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0L8 4L0 8Z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <!-- stage 1: context window, a few cells masked (missing frames) -->
+          <g transform="translate(8,40)">
+            <text x="60" y="-18" text-anchor="middle" class="dg-label" fill="var(--text)">context window</text>
+            <g>
+              <rect x="0" y="0" width="18" height="14" rx="1.5" fill="var(--panel)" stroke="var(--panel-line)" /><rect x="20" y="0" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.35" /><rect x="40" y="0" width="18" height="14" rx="1.5" fill="var(--panel)" stroke="var(--panel-line)" /><rect x="60" y="0" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.5" /><rect x="80" y="0" width="18" height="14" rx="1.5" fill="var(--panel)" stroke="var(--panel-line)" /><rect x="100" y="0" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.3" />
+              <rect x="0" y="18" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.55" /><rect x="20" y="18" width="18" height="14" rx="1.5" fill="none" stroke="var(--danger)" stroke-dasharray="2 2" /><rect x="40" y="18" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.4" /><rect x="60" y="18" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.6" /><rect x="80" y="18" width="18" height="14" rx="1.5" fill="none" stroke="var(--danger)" stroke-dasharray="2 2" /><rect x="100" y="18" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.45" />
+              <rect x="0" y="36" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.3" /><rect x="20" y="36" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.5" /><rect x="40" y="36" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.35" /><rect x="60" y="36" width="18" height="14" rx="1.5" fill="none" stroke="var(--danger)" stroke-dasharray="2 2" /><rect x="80" y="36" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.55" /><rect x="100" y="36" width="18" height="14" rx="1.5" fill="var(--accent-observed)" opacity="0.4" />
+            </g>
+            <text x="59" y="70" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">dashed = dropped frame</text>
+          </g>
+
+          <line x1="140" y1="90" x2="192" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#arr)" />
+          <text x="166" y="78" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">patchify</text>
+
+          <!-- stage 2: masked patch tokens -->
+          <g transform="translate(198,58)">
+            <text x="55" y="-18" text-anchor="middle" class="dg-label" fill="var(--text)">patch tokens</text>
+            <rect x="0" y="0" width="26" height="26" rx="3" fill="var(--accent-observed)" opacity="0.85" />
+            <rect x="32" y="0" width="26" height="26" rx="3" fill="var(--accent-observed)" opacity="0.85" />
+            <rect x="64" y="0" width="26" height="26" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity="0.6" />
+            <rect x="96" y="0" width="26" height="26" rx="3" fill="var(--accent-observed)" opacity="0.85" />
+            <text x="77" y="44" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">masked</text>
+          </g>
+
+          <line x1="332" y1="90" x2="384" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#arr)" />
+          <text x="358" y="78" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">temporal mix</text>
+
+          <!-- stage 3: gated depthwise mixing, one lane per variate -->
+          <g transform="translate(390,44)">
+            <text x="55" y="-18" text-anchor="middle" class="dg-label" fill="var(--text)">per-signal gating</text>
+            <g stroke="var(--panel-line)" stroke-width="1.2">
+              <line x1="0" y1="6" x2="112" y2="6" />
+              <line x1="0" y1="46" x2="112" y2="46" />
+              <line x1="0" y1="86" x2="112" y2="86" />
+            </g>
+            <g fill="var(--accent-forecast)">
+              <path d="M50 0 L62 6 L50 12 Z" />
+              <path d="M50 40 L62 46 L50 52 Z" />
+              <path d="M50 80 L62 86 L50 92 Z" />
+            </g>
+          </g>
+
+          <line x1="526" y1="90" x2="578" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#arr)" />
+          <text x="552" y="78" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">cross-variate</text>
+
+          <!-- stage 4: permutation-equivariant variate attention -->
+          <g transform="translate(584,44)">
+            <text x="50" y="-18" text-anchor="middle" class="dg-label" fill="var(--text)">variate attention</text>
+            <g stroke="var(--accent-observed)" stroke-width="1" opacity="0.55">
+              <line x1="6" y1="6" x2="6" y2="86" />
+              <line x1="50" y1="6" x2="50" y2="86" />
+              <line x1="94" y1="6" x2="94" y2="86" />
+              <line x1="6" y1="6" x2="94" y2="86" />
+              <line x1="6" y1="86" x2="94" y2="6" />
+              <line x1="6" y1="46" x2="94" y2="46" />
+            </g>
+            <circle cx="6" cy="6" r="4" fill="var(--accent-forecast)" /><circle cx="6" cy="46" r="4" fill="var(--accent-forecast)" /><circle cx="6" cy="86" r="4" fill="var(--accent-forecast)" />
+            <circle cx="94" cy="6" r="4" fill="var(--accent-forecast)" /><circle cx="94" cy="46" r="4" fill="var(--accent-forecast)" /><circle cx="94" cy="86" r="4" fill="var(--accent-forecast)" />
+          </g>
+
+          <line x1="694" y1="90" x2="746" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#arr)" />
+          <text x="720" y="78" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">decode</text>
+
+          <!-- stage 5: ordered quantile head, fanning to 7 outputs -->
+          <g transform="translate(752,90)">
+            <text x="80" y="-68" text-anchor="middle" class="dg-label" fill="var(--text)">7 quantiles</text>
+            <circle cx="0" cy="0" r="3" fill="var(--accent-forecast)" />
+            <g stroke="var(--accent-forecast)" stroke-width="1" opacity="0.7">
+              <line x1="0" y1="0" x2="150" y2="-60" />
+              <line x1="0" y1="0" x2="150" y2="-38" />
+              <line x1="0" y1="0" x2="150" y2="-16" />
+              <line x1="0" y1="0" x2="150" y2="6" />
+              <line x1="0" y1="0" x2="150" y2="28" />
+              <line x1="0" y1="0" x2="150" y2="50" />
+              <line x1="0" y1="0" x2="150" y2="72" />
+            </g>
+            <g fill="var(--accent-forecast)">
+              <circle cx="150" cy="-60" r="2.3" /><circle cx="150" cy="-38" r="2.3" /><circle cx="150" cy="-16" r="2.3" /><circle cx="150" cy="6" r="2.3" /><circle cx="150" cy="28" r="2.3" /><circle cx="150" cy="50" r="2.3" /><circle cx="150" cy="72" r="2.3" />
+            </g>
+          </g>
+        </svg>
+        <figcaption>The real forward path, left to right: a masked context window becomes patch tokens; a gated depthwise convolution mixes each signal's own history; permutation-equivariant attention cross-references signals regardless of their order; an ordered-quantile head decodes seven plausible futures per step, not one.</figcaption>
+      </figure>
+
       <div class="grid-2">
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 0;">
           <h3>Three backends, one model</h3>
           <p>CPU (ndarray) for portability and CI, CUDA for Linux/NVIDIA training, WGPU for cross-platform GPU inference — same architecture, feature-gated at compile time.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 1;">
           <h3><code>#![forbid(unsafe_code)]</code></h3>
           <p>The model crate carries zero unsafe blocks. Configuration and artifact validation are exposed even with Burn disabled entirely, so the rest of the workspace never has to pull in a GPU toolchain to type-check against it.</p>
         </div>
@@ -448,12 +590,101 @@
         <h2>A hyperparameter can't promote itself.</h2>
         <p>RuForecast pairs with two governed pipelines built alongside it: Darwin Mode searches the hyperparameter space; Autogenous cryptographically verifies any candidate before it's trusted — never the other way around.</p>
       </div>
+
+      <figure class="mech reveal-item" style="--stagger: 0;">
+        <svg class="dg-wide" viewBox="0 0 920 260" role="img" aria-label="Darwin Mode mutates a parent hyperparameter genome into several candidates; each candidate is scored against multiple independent held-out corpora and must clear a signed-receipt promotion gate, beating its parent by a real margin, before it can be trusted — as of this project's own research, every candidate tried so far has been rejected at that gate." style="color: var(--text-dim);">
+          <defs>
+            <marker id="arr2" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0L8 4L0 8Z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <text x="10" y="26" class="dg-label" fill="var(--text)">parent genome</text>
+          <circle cx="26" cy="130" r="9" fill="var(--accent-observed)" />
+
+          <g stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 3" opacity="0.7" fill="none">
+            <path d="M35 130 C 90 60, 140 42, 190 42" marker-end="url(#arr2)" />
+            <path d="M35 130 C 90 130, 140 130, 190 130" marker-end="url(#arr2)" />
+            <path d="M35 130 C 90 200, 140 218, 190 218" marker-end="url(#arr2)" />
+          </g>
+          <text x="95" y="30" class="dg-caplabel" fill="var(--text-dim)">Darwin mutates</text>
+
+          <g font-family="var(--font-mono)">
+            <g transform="translate(196,20)">
+              <rect width="118" height="44" rx="4" fill="var(--panel)" stroke="var(--panel-line)" />
+              <text x="59" y="27" text-anchor="middle" class="dg-caplabel" fill="var(--text)">candidate A</text>
+            </g>
+            <g transform="translate(196,108)">
+              <rect width="118" height="44" rx="4" fill="var(--panel)" stroke="var(--panel-line)" />
+              <text x="59" y="27" text-anchor="middle" class="dg-caplabel" fill="var(--text)">candidate B</text>
+            </g>
+            <g transform="translate(196,196)">
+              <rect width="118" height="44" rx="4" fill="var(--panel)" stroke="var(--panel-line)" />
+              <text x="59" y="27" text-anchor="middle" class="dg-caplabel" fill="var(--text)">candidate C</text>
+            </g>
+          </g>
+
+          <g stroke="currentColor" stroke-width="1.1" marker-end="url(#arr2)" opacity="0.8">
+            <line x1="314" y1="42" x2="366" y2="42" /><line x1="314" y1="130" x2="366" y2="130" /><line x1="314" y1="218" x2="366" y2="218" />
+          </g>
+          <text x="340" y="14" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">score × N corpora</text>
+
+          <g font-family="var(--font-mono)">
+            <g transform="translate(372,20)">
+              <rect width="150" height="44" rx="4" fill="var(--panel)" stroke="var(--panel-line)" />
+              <path d="M14 22 v-6 a5 5 0 0 1 10 0 v6 M12 22 h14 v12 h-14 z" fill="none" stroke="var(--accent-forecast)" stroke-width="1.3" transform="translate(0,-2)" />
+              <text x="86" y="27" text-anchor="middle" class="dg-caplabel" fill="var(--text)">signed receipt</text>
+            </g>
+            <g transform="translate(372,108)">
+              <rect width="150" height="44" rx="4" fill="var(--panel)" stroke="var(--panel-line)" />
+              <path d="M14 22 v-6 a5 5 0 0 1 10 0 v6 M12 22 h14 v12 h-14 z" fill="none" stroke="var(--accent-forecast)" stroke-width="1.3" transform="translate(0,-2)" />
+              <text x="86" y="27" text-anchor="middle" class="dg-caplabel" fill="var(--text)">signed receipt</text>
+            </g>
+            <g transform="translate(372,196)">
+              <rect width="150" height="44" rx="4" fill="var(--panel)" stroke="var(--panel-line)" />
+              <path d="M14 22 v-6 a5 5 0 0 1 10 0 v6 M12 22 h14 v12 h-14 z" fill="none" stroke="var(--accent-forecast)" stroke-width="1.3" transform="translate(0,-2)" />
+              <text x="86" y="27" text-anchor="middle" class="dg-caplabel" fill="var(--text)">signed receipt</text>
+            </g>
+          </g>
+
+          <g stroke="currentColor" stroke-width="1.1" marker-end="url(#arr2)" opacity="0.8">
+            <line x1="522" y1="42" x2="574" y2="42" /><line x1="522" y1="130" x2="574" y2="130" /><line x1="522" y1="218" x2="574" y2="218" />
+          </g>
+          <text x="548" y="14" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)">beats parent by margin?</text>
+
+          <!-- gate diamonds: honest current state — every real candidate tried has failed this gate -->
+          <g font-family="var(--font-mono)">
+            <polygon points="620,20 660,42 620,64 580,42" fill="var(--panel)" stroke="var(--danger)" stroke-width="1.3" />
+            <polygon points="620,108 660,130 620,152 580,130" fill="var(--panel)" stroke="var(--danger)" stroke-width="1.3" />
+            <polygon points="620,196 660,218 620,240 580,218" fill="var(--panel)" stroke="var(--danger)" stroke-width="1.3" />
+          </g>
+
+          <g stroke="var(--danger)" stroke-width="1.2" marker-end="url(#arr2)" opacity="0.85">
+            <path d="M660 42 C 700 42, 700 42, 730 42" />
+            <path d="M660 130 C 700 130, 700 130, 730 130" />
+            <path d="M660 218 C 700 218, 700 218, 730 218" />
+          </g>
+          <g font-family="var(--font-mono)" fill="var(--danger)">
+            <text x="736" y="46" class="dg-caplabel">rejected</text>
+            <text x="736" y="134" class="dg-caplabel">rejected</text>
+            <text x="736" y="222" class="dg-caplabel">rejected</text>
+          </g>
+
+          <g stroke="currentColor" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" marker-end="url(#arr2)">
+            <path d="M660 130 C 780 130, 800 130, 850 130" />
+          </g>
+          <text x="855" y="126" class="dg-caplabel" fill="var(--text-dim)">promoted</text>
+          <text x="795" y="152" text-anchor="middle" class="dg-caplabel" fill="var(--text-dim)" font-style="italic">not yet reached</text>
+        </svg>
+        <figcaption>The real gate, drawn as it currently stands: every candidate Darwin has proposed so far has been independently re-scored on fresh, out-of-search corpora by Autogenous and rejected for not clearing its parent by a real margin. The "promoted" path exists and is enforced — it just hasn't been earned yet.</figcaption>
+      </figure>
+
       <div class="grid-2">
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 0;">
           <h3>Darwin Mode — search</h3>
           <p>A numeric-genome evolution engine mutates and scores candidate hyperparameter sets against held-out weighted quantile loss, evaluated across multiple independent synthetic corpora — not one fixed dataset a search could quietly overfit to.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 1;">
           <h3>Autogenous — verify</h3>
           <p>A candidate that "wins" a search still needs signed evaluation receipts from independent judges, on out-of-search data, beating its parent by a real margin, before a promotion gate will even consider it. No generated candidate promotes itself.</p>
         </div>
@@ -485,28 +716,63 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
         <h2>What you actually get.</h2>
       </div>
       <div class="grid-2">
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 0;">
           <h3>No opaque forecasts</h3>
           <p>Uncertainty is a first-class output, not an afterthought — downstream systems can act on a range, abstain on low confidence, or flag a widening interval as a signal in itself.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 1;">
           <h3>Governed by construction</h3>
           <p>Privacy class, retention, and consent are typed fields checked before training runs, not policy documents someone has to remember to follow.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 2;">
           <h3>Verifiable, not just tested</h3>
           <p>A hyperparameter improvement carries a signed, replayable receipt — anyone can independently re-check that a promoted candidate really did beat its parent.</p>
         </div>
-        <div class="card">
+        <div class="card reveal-item" style="--stagger: 3;">
           <h3>Runs where your hardware is</h3>
           <p>The same model compiles for a CI runner's CPU, a training rig's CUDA GPU, or a portable WGPU target — pick the backend, not a different codebase.</p>
         </div>
       </div>
 
-      <div class="honesty" style="margin-top: 2.4rem;">
+      <div class="honesty reveal-item" style="margin-top: 2.4rem; --stagger: 0;">
         <p class="eyebrow">Research status — read this before you trust a number</p>
         <h3>No configuration has yet been shown to reliably beat trivial forecasting baselines out-of-sample.</h3>
         <p>Two independent hyperparameter searches this project ran — each cryptographically verified against fresh, out-of-search synthetic data — found that at the current small training-corpus scale, dataset noise dominates any real hyperparameter effect. Neither search's "winner" held up under independent verification.</p>
+
+        <figure class="mech" style="margin: 1.6rem 0 0.4rem;">
+          <svg class="dg-med" viewBox="0 0 640 172" role="img" aria-label="Weighted quantile loss chart, lower is better: on two fresh out-of-search corpora, the searched candidate genome scored 0.178 and 0.314, both worse than the trivial baseline's 0.099 and 0.109 on the same corpora — the baseline has not been beaten yet." style="color: var(--text-dim);">
+            <line x1="40" y1="20" x2="40" y2="122" stroke="var(--panel-line)" />
+            <line x1="40" y1="122" x2="620" y2="122" stroke="var(--panel-line)" />
+            <text x="6" y="24" class="dg-caplabel" fill="var(--text-dim)">WQL</text>
+            <text x="6" y="126" class="dg-caplabel" fill="var(--text-dim)">0</text>
+            <text x="620" y="136" text-anchor="end" class="dg-caplabel" fill="var(--text-dim)" font-style="italic">lower is better &#8595;</text>
+
+            <!-- corpus A: baseline 0.099 vs candidate 0.178 -->
+            <g font-family="var(--font-mono)">
+              <text x="160" y="14" text-anchor="middle" class="dg-caplabel" fill="var(--text)">corpus A</text>
+              <rect x="120" y="112" width="34" height="10" fill="var(--accent-observed)" />
+              <rect x="166" y="86" width="34" height="36" fill="var(--danger)" opacity="0.85" />
+              <text x="137" y="108" text-anchor="middle" class="dg-caplabel" fill="var(--text)">0.099</text>
+              <text x="183" y="82" text-anchor="middle" class="dg-caplabel" fill="var(--text)">0.178</text>
+            </g>
+
+            <!-- corpus B: baseline 0.109 vs candidate 0.314 -->
+            <g font-family="var(--font-mono)">
+              <text x="480" y="14" text-anchor="middle" class="dg-caplabel" fill="var(--text)">corpus B</text>
+              <rect x="440" y="111" width="34" height="11" fill="var(--accent-observed)" />
+              <rect x="486" y="34" width="34" height="88" fill="var(--danger)" opacity="0.85" />
+              <text x="457" y="107" text-anchor="middle" class="dg-caplabel" fill="var(--text)">0.109</text>
+              <text x="503" y="30" text-anchor="middle" class="dg-caplabel" fill="var(--text)">0.314</text>
+            </g>
+
+            <g font-family="var(--font-mono)" class="dg-caplabel">
+              <rect x="200" y="152" width="10" height="10" fill="var(--accent-observed)" /><text x="214" y="161" fill="var(--text-dim)">trivial baseline</text>
+              <rect x="340" y="152" width="10" height="10" fill="var(--danger)" opacity="0.85" /><text x="354" y="161" fill="var(--text-dim)">searched candidate</text>
+            </g>
+          </svg>
+          <figcaption>Real numbers from the second, post-fix search round, re-scored on out-of-search data — the candidate lost on both corpora it was independently checked against.</figcaption>
+        </figure>
+
         <ul>
           <li>This is reported here on purpose, not buried in an issue tracker — the project's standing rule is that every accuracy claim is tagged <strong>MEASURED</strong>, <strong>CLAIMED</strong>, or <strong>SYNTHETIC</strong>, and nothing is claimed as proven until it is.</li>
           <li>The credible next lever is more real training data, not further search on a small synthetic fixture — that work is active.</li>
@@ -538,9 +804,9 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
 
   // ---- theme: system already handled by CSS; no manual toggle needed ----
 
-  // ---- reveal on scroll ----
+  // ---- reveal on scroll (sections fade as a whole; .reveal-item children stagger via CSS --stagger) ----
   var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var revealEls = document.querySelectorAll(".reveal");
+  var revealEls = document.querySelectorAll(".reveal, .reveal-item");
   if (reduceMotion || !("IntersectionObserver" in window)) {
     revealEls.forEach(function (el) { el.classList.add("is-visible"); });
   } else {
@@ -554,6 +820,122 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
     }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
     revealEls.forEach(function (el) { io.observe(el); });
   }
+
+  // ---- hero stat count-up: small, tasteful, real numbers only ----
+  (function () {
+    var stats = document.querySelectorAll(".hero-stats .stat-value");
+    stats.forEach(function (el) {
+      var target = parseInt(el.textContent, 10);
+      if (isNaN(target) || reduceMotion) return;
+      var from = 0;
+      var duration = 700;
+      var start = null;
+      function step(ts) {
+        if (start === null) start = ts;
+        var p = Math.min(1, (ts - start) / duration);
+        var eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = Math.round(from + (target - from) * eased);
+        if (p < 1) requestAnimationFrame(step);
+        else el.textContent = target;
+      }
+      el.textContent = "0";
+      requestAnimationFrame(step);
+    });
+  })();
+
+  // ---- ambient field: faint drifting CSI-subcarrier traces behind everything ----
+  (function () {
+    var fcanvas = document.getElementById("field");
+    var fctx = fcanvas.getContext("2d");
+    var fdpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    function fresize() {
+      fcanvas.width = Math.floor(window.innerWidth * fdpr);
+      fcanvas.height = Math.floor(window.innerHeight * fdpr);
+      fcanvas.style.width = window.innerWidth + "px";
+      fcanvas.style.height = window.innerHeight + "px";
+    }
+
+    function seeded(seed) {
+      var s = seed;
+      return function () {
+        s = (s * 1103515245 + 12345) % 2147483648;
+        return s / 2147483648;
+      };
+    }
+
+    // three depth layers (far/mid/near) — more, thinner, slower lines further back;
+    // fewer, bolder, faster-parallaxing lines up close, echoing multi-subcarrier CSI.
+    var layers = [
+      { count: 9,  amp: 10, freq: 0.009, speed: 0.09, depth: 0.03, alpha: 0.10, seed: 11, color: "line" },
+      { count: 6,  amp: 16, freq: 0.015, speed: 0.15, depth: 0.06, alpha: 0.13, seed: 29, color: "observed" },
+      { count: 4,  amp: 24, freq: 0.022, speed: 0.22, depth: 0.11, alpha: 0.16, seed: 53, color: "forecast" }
+    ];
+    layers.forEach(function (layer) {
+      var rand = seeded(layer.seed);
+      layer.phase = []; layer.rowT = [];
+      for (var i = 0; i < layer.count; i++) { layer.phase.push(rand() * Math.PI * 2); layer.rowT.push(rand()); }
+    });
+
+    var colors = { line: "#888", observed: "#4FD1C5", forecast: "#F2A93B" };
+    function refreshColor() {
+      var cs = getComputedStyle(document.documentElement);
+      colors.line = cs.getPropertyValue("--panel-line").trim() || "#888";
+      colors.observed = cs.getPropertyValue("--accent-observed").trim() || "#4FD1C5";
+      colors.forecast = cs.getPropertyValue("--accent-forecast").trim() || "#F2A93B";
+    }
+
+    var t = 0;
+    function renderOnce() {
+      var w = window.innerWidth, h = window.innerHeight;
+      fctx.setTransform(fdpr, 0, 0, fdpr, 0, 0);
+      fctx.clearRect(0, 0, w, h);
+      fctx.lineWidth = 1.1;
+      var parY = window.scrollY;
+      layers.forEach(function (layer) {
+        fctx.strokeStyle = colors[layer.color] || colors.line;
+        fctx.globalAlpha = layer.alpha;
+        for (var i = 0; i < layer.count; i++) {
+          var rowY = ((layer.rowT[i] * h + parY * layer.depth) % h + h) % h;
+          fctx.beginPath();
+          var steps = 48;
+          for (var s = 0; s <= steps; s++) {
+            var x = (s / steps) * w;
+            var y = rowY + Math.sin(x * layer.freq + t * layer.speed + layer.phase[i]) * layer.amp;
+            if (s === 0) fctx.moveTo(x, y); else fctx.lineTo(x, y);
+          }
+          fctx.stroke();
+        }
+      });
+      fctx.globalAlpha = 1;
+    }
+
+    var running = !reduceMotion;
+    var lastTs = null;
+    function loop(now) {
+      if (!running) return;
+      if (lastTs === null) lastTs = now;
+      t += Math.min(now - lastTs, 48) * 0.001;
+      lastTs = now;
+      renderOnce();
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { running = false; }
+      else if (!reduceMotion) { running = true; lastTs = null; requestAnimationFrame(loop); }
+    });
+    window.addEventListener("resize", function () { fresize(); if (reduceMotion) renderOnce(); });
+    window.addEventListener("scroll", function () { if (reduceMotion) renderOnce(); }, { passive: true });
+
+    refreshColor();
+    fresize();
+    if (reduceMotion) {
+      renderOnce(); // one static frame — no continuous animation
+    } else {
+      requestAnimationFrame(loop);
+    }
+  })();
 
   // ---- spine canvas: an observed trace that widens into a forecast fan ----
   var canvas = document.getElementById("spine");
