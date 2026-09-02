@@ -4,7 +4,7 @@ use crate::digest::CanonicalWriter;
 use crate::series::validate_text;
 use crate::{
     CanonicalDigest, DataPolicy, ForecastError, QuantileSet, SourceKind, SourceState,
-    MAX_FORECAST_SPAN_MS, MAX_STEP_MS,
+    VerifiedFalDataset, MAX_FORECAST_SPAN_MS, MAX_STEP_MS,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -370,16 +370,25 @@ pub enum TrainingDestinationKind {
 
 /// V1 fal contract that exports no dataset and generates synthetic rows from
 /// an allowlisted recipe and deterministic seed.
+///
+/// This type is only constructible from a [`VerifiedFalDataset`] — the
+/// non-deserializable proof minted by [`crate::FalGovernanceVerifier::verify`]
+/// — so no caller can reach a fal-destined [`TrainSpec`] with a bare
+/// self-asserted [`SourceState::synthetic`] and no governance verification
+/// (ADR-349).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyntheticFalContract {
     generator_recipe_digest: CanonicalDigest,
     generator_seed: u64,
     source_digest: CanonicalDigest,
+    governance_digest: CanonicalDigest,
 }
 
 impl SyntheticFalContract {
     fn new(
         source: &SourceState,
+        verified: &VerifiedFalDataset,
+        dataset_digest: CanonicalDigest,
         generator_recipe_digest: CanonicalDigest,
         generator_seed: u64,
     ) -> Result<Self, ForecastError> {
@@ -394,10 +403,19 @@ impl SyntheticFalContract {
                 field: "generator_recipe_digest",
             });
         }
+        if verified.dataset_digest() != dataset_digest
+            || verified.generator_recipe_digest() != generator_recipe_digest
+            || verified.generator_seed() != generator_seed
+        {
+            return Err(ForecastError::DigestMismatch {
+                field: "fal_governance_verification",
+            });
+        }
         Ok(Self {
             generator_recipe_digest,
             generator_seed,
             source_digest: source.canonical_digest(),
+            governance_digest: verified.canonical_digest(),
         })
     }
 
@@ -419,11 +437,19 @@ impl SyntheticFalContract {
         self.source_digest
     }
 
+    /// Digest of the exact operator-signed governance verification that
+    /// authorized this contract.
+    #[must_use]
+    pub const fn governance_digest(&self) -> CanonicalDigest {
+        self.governance_digest
+    }
+
     fn canonical_digest(&self) -> CanonicalDigest {
-        let mut writer = CanonicalWriter::new(b"synthetic-fal-contract-v1");
+        let mut writer = CanonicalWriter::new(b"synthetic-fal-contract-v2");
         writer.digest(self.generator_recipe_digest);
         writer.u64(self.generator_seed);
         writer.digest(self.source_digest);
+        writer.digest(self.governance_digest);
         writer.finish()
     }
 }
@@ -476,6 +502,12 @@ impl TrainSpec {
 
     /// Construct a v1 fal contract that sends no dataset and generates only
     /// synthetic data from an allowlisted recipe.
+    ///
+    /// `verified` must come from [`crate::FalGovernanceVerifier::verify`] for
+    /// this exact `dataset_digest`/`policy`/recipe/seed combination; there is
+    /// no other way to construct one. This is what makes a fal-destined
+    /// contract require real governance sign-off instead of a caller's own
+    /// unverified [`SourceState::synthetic`] claim.
     #[allow(clippy::too_many_arguments)]
     pub fn new_fal_synthetic(
         context_length: usize,
@@ -487,10 +519,22 @@ impl TrainSpec {
         dataset_digest: CanonicalDigest,
         policy: DataPolicy,
         source: &SourceState,
+        verified: &VerifiedFalDataset,
         generator_recipe_digest: CanonicalDigest,
         generator_seed: u64,
     ) -> Result<Self, ForecastError> {
-        let synthetic = SyntheticFalContract::new(source, generator_recipe_digest, generator_seed)?;
+        if verified.policy_digest() != policy.canonical_digest() {
+            return Err(ForecastError::DigestMismatch {
+                field: "fal_governance_policy",
+            });
+        }
+        let synthetic = SyntheticFalContract::new(
+            source,
+            verified,
+            dataset_digest,
+            generator_recipe_digest,
+            generator_seed,
+        )?;
         Self::from_parts(
             context_length,
             horizon,
@@ -859,10 +903,60 @@ fn write_members(writer: &mut CanonicalWriter, members: &[SplitMember]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PrivacyClass;
+    use crate::{
+        FalGovernanceClaims, FalGovernanceVerifier, PrivacyClass, SignedFalGovernanceReceipt,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
 
     fn digest(value: &[u8]) -> CanonicalDigest {
         CanonicalDigest::of_bytes(b"split-test", value)
+    }
+
+    /// Mints a real [`VerifiedFalDataset`] the way an operator governance
+    /// authority would: sign [`FalGovernanceClaims`] and verify them through
+    /// [`FalGovernanceVerifier`]. There is no other way to construct one.
+    fn verified_dataset(
+        policy: &DataPolicy,
+        dataset_digest: CanonicalDigest,
+        generator_recipe_digest: CanonicalDigest,
+        generator_seed: u64,
+    ) -> VerifiedFalDataset {
+        let synthetic_source = SourceState::synthetic("allowlisted generator").unwrap();
+        let claims = FalGovernanceClaims::new(
+            "approval-1",
+            dataset_digest,
+            digest(b"schema"),
+            &synthetic_source,
+            policy,
+            generator_recipe_digest,
+            generator_seed,
+            100,
+            1_000,
+        )
+        .unwrap();
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let signature = signing_key.sign(claims.signing_digest().as_bytes());
+        let signed = SignedFalGovernanceReceipt::new(
+            claims,
+            signing_key.verifying_key().to_bytes().to_vec(),
+            signature.to_bytes().to_vec(),
+        )
+        .unwrap();
+        let verifier =
+            FalGovernanceVerifier::new(vec![signing_key.verifying_key().to_bytes()]).unwrap();
+        verifier
+            .verify(
+                &signed,
+                dataset_digest,
+                digest(b"schema"),
+                &synthetic_source,
+                policy,
+                "tenant",
+                "account",
+                "workspace",
+                500,
+            )
+            .unwrap()
     }
 
     fn member(room: &str, session: &str, start: u64, end: u64) -> SplitMember {
@@ -970,6 +1064,9 @@ mod tests {
             )
             .unwrap()
         };
+        let policy = policy(1_000);
+        let verified = verified_dataset(&policy, digest(b"dataset"), digest(b"recipe"), 42);
+
         let claimed = SourceState::claimed("caller claim").unwrap();
         let denied = TrainSpec::new_fal_synthetic(
             4,
@@ -979,8 +1076,9 @@ mod tests {
             make_split(),
             NormalizationPolicy::StandardizeTrainOnly,
             digest(b"dataset"),
-            policy(1_000),
+            policy.clone(),
             &claimed,
+            &verified,
             digest(b"recipe"),
             42,
         );
@@ -995,8 +1093,9 @@ mod tests {
             make_split(),
             NormalizationPolicy::StandardizeTrainOnly,
             digest(b"dataset"),
-            policy(1_000),
+            policy,
             &synthetic,
+            &verified,
             digest(b"recipe"),
             42,
         )

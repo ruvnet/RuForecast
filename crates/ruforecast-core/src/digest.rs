@@ -10,6 +10,23 @@ use std::fmt;
 /// stable across CPU architectures. Higher-level types write lengths as
 /// big-endian `u64`, floats as normalized IEEE-754 bits, and enum tags as
 /// single bytes through the crate-private [`CanonicalWriter`].
+///
+/// This duplicates the general shape of RuView's `ruview-attest::PayloadHash`
+/// (BLAKE3, domain-separated) rather than depending on it, for the same
+/// standalone-repository reason documented on [`crate::SourceKind`]: this
+/// crate has no path dependency into RuView's `v2/` workspace. Beyond the
+/// repository boundary, the two are not drop-in equivalents even if the
+/// dependency existed: [`crate::TrainSpec::canonical_digest`] and friends
+/// bind together many independently-produced sub-digests (split plan,
+/// policy, quantiles, ...) into one payload, and every domain string here is
+/// specific to this crate's own wire shapes, so an algorithm swap alone
+/// would not eliminate the domain-separation bookkeeping this type owns.
+/// Contrast `Sha256Digest` in the sibling `ruforecast-train` crate
+/// (`ruforecast_train::config::Sha256Digest`), which is deliberately a
+/// different, non-domain-separated type: it hashes raw bytes for the fal.ai
+/// wire protocol (build manifests, job digests) where a domain-separated
+/// digest would not match what an external tool computes over the same
+/// bytes.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CanonicalDigest([u8; 32]);

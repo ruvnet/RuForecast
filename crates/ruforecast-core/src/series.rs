@@ -196,7 +196,7 @@ impl TimeSeries {
         )?;
         check_shape("values", expected, values.len())?;
         check_shape("observed_mask", expected, observed_mask.len())?;
-        check_finite("values", &values)?;
+        check_finite_observed("values", &values, &observed_mask)?;
         for (value, observed) in values.iter_mut().zip(&observed_mask) {
             if !observed || *value == 0.0 {
                 *value = 0.0;
@@ -631,6 +631,27 @@ pub(crate) fn check_finite(field: &'static str, values: &[f32]) -> Result<(), Fo
     Ok(())
 }
 
+/// Like [`check_finite`], but only at indices where `observed` is true.
+/// Real WiFi CSI data has normal per-cell dropout; a NaN/inf placeholder
+/// sitting in an unobserved slot must not abort validation of an otherwise
+/// well-formed array, matching the mask every caller applies afterward.
+/// `values` and `observed` are assumed equal length (callers check shape
+/// first).
+pub(crate) fn check_finite_observed(
+    field: &'static str,
+    values: &[f32],
+    observed: &[bool],
+) -> Result<(), ForecastError> {
+    if let Some(index) = values
+        .iter()
+        .zip(observed)
+        .position(|(value, observed)| *observed && !value.is_finite())
+    {
+        return Err(ForecastError::NonFinite { field, index });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +743,25 @@ mod tests {
             unordered,
             Err(ForecastError::NonMonotonicTimestamp { .. })
         ));
+    }
+
+    #[test]
+    fn nonfinite_value_at_an_unobserved_cell_is_accepted() {
+        // Real WiFi CSI capture has normal per-cell dropout; a NaN sitting in
+        // an already-unobserved slot must not abort construction of an
+        // otherwise well-formed series.
+        let accepted = TimeSeries::new(
+            schema(),
+            vec![1, 2],
+            vec![1.0, 2.0, f32::NAN, 4.0],
+            vec![true, true, false, true],
+            SourceState::claimed("test").unwrap(),
+            policy(),
+        )
+        .unwrap();
+        // The unobserved slot is still canonicalized to 0.0, same as any
+        // other missing value.
+        assert_eq!(accepted.values()[2], 0.0);
     }
 
     #[test]

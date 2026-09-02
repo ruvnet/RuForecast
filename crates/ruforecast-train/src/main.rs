@@ -10,8 +10,12 @@ use ruforecast_core::{
     CanonicalDigest, DataPolicy, HoldoutKey, NormalizationPolicy, PrivacyClass, QuantileSet,
     SeriesKey, SplitMember, SplitStrategy, TemporalSplitPlan, TimeRange,
 };
+#[cfg(feature = "fal-client")]
+use ruforecast_core::{SignedFalGovernanceReceipt, SourceState};
 #[cfg(any(feature = "fal-client", feature = "cpu", feature = "cuda"))]
 use ruforecast_train::config::SyntheticDatasetSpec;
+#[cfg(feature = "fal-client")]
+use ruforecast_train::config::MAX_CUMULATIVE_ARTIFACT_BYTES;
 use ruforecast_train::config::{
     DatasetInput, DatasetSource, JobId, LocalTrainSpecWire, LocalTrainingRequestWire, ModelProfile,
     OptimizerSpec, RelativeDataPath, Sha256Digest, TrainingBudget, TrainingDevice,
@@ -222,6 +226,80 @@ enum FalCommand {
         /// Reservation lifetime; also transmitted and digest-bound.
         #[arg(long, default_value_t = 6_300)]
         expires_in_seconds: u64,
+        /// Path to a JSON-encoded `DataPolicy` carrying real consent/DPA/
+        /// export receipts (ADR-349). Must match the policy the governance
+        /// receipt below was signed for.
+        #[arg(long)]
+        governance_policy: PathBuf,
+        /// Path to a JSON-encoded `SignedFalGovernanceReceipt` verifying
+        /// this exact dataset/schema/policy/recipe (ADR-349). Mint it with a
+        /// separate, operator-controlled signing tool -- this CLI only
+        /// verifies, it never signs.
+        #[arg(long)]
+        governance_receipt: PathBuf,
+        /// Path to a JSON-encoded `SignedSpendApproval` bound to the exact
+        /// request digest this submission produces and covering
+        /// `max_micro_usd` (ADR-349). Use `fal plan` to compute the digest
+        /// to get signed before running `fal submit`.
+        #[arg(long)]
+        spend_approval: PathBuf,
+    },
+    /// Compute the exact request digest a later `fal submit` with the same
+    /// arguments (and `approval_id`) will produce, without spending or
+    /// requiring governance material yet. An operator signs this digest
+    /// offline to produce the `--spend-approval` file `fal submit` needs.
+    Plan {
+        /// Generated windows.
+        #[arg(long, default_value_t = 1024)]
+        windows: u32,
+        /// Coupled variates.
+        #[arg(long, default_value_t = 8)]
+        variates: u16,
+        /// Generator seed.
+        #[arg(long, default_value_t = 7)]
+        seed: u64,
+        /// Allowlisted fixed architecture.
+        #[arg(long, value_enum, default_value = "tiny-ci")]
+        model_profile: HostedModelProfile,
+        /// Full passes over the generated windows.
+        #[arg(long, default_value_t = 1)]
+        epochs: u16,
+        /// Windows per optimizer step.
+        #[arg(long, default_value_t = 8)]
+        batch_size: u16,
+        /// AdamW learning rate.
+        #[arg(long, default_value_t = 1e-3)]
+        learning_rate: f64,
+        /// AdamW decoupled weight decay.
+        #[arg(long, default_value_t = 1e-4)]
+        weight_decay: f64,
+        /// Gradient norm cap.
+        #[arg(long, default_value_t = 1.0)]
+        gradient_clip_norm: f64,
+        /// Worker wall-clock ceiling.
+        #[arg(long, default_value_t = 3_300)]
+        max_wall_time_seconds: u64,
+        /// Operator-approved provider billable-seconds ceiling.
+        #[arg(long, default_value_t = 3_300)]
+        max_billable_seconds: u64,
+        /// Conservative peak worker-memory reservation.
+        #[arg(long, default_value_t = 32 * 1024 * 1024 * 1024)]
+        max_memory_bytes: u64,
+        /// Reservation lifetime; also transmitted and digest-bound.
+        #[arg(long, default_value_t = 6_300)]
+        expires_in_seconds: u64,
+        /// Fresh, high-entropy identifier for the approval this plan is
+        /// for. Also seeds the hosted job namespace; must be reused
+        /// unchanged on the matching `fal submit`.
+        #[arg(long)]
+        approval_id: String,
+        /// Path to a JSON-encoded `DataPolicy`, matching `fal submit`.
+        #[arg(long)]
+        governance_policy: PathBuf,
+        /// Path to a JSON-encoded `SignedFalGovernanceReceipt`, matching
+        /// `fal submit`.
+        #[arg(long)]
+        governance_receipt: PathBuf,
     },
     /// Read queue status.
     Status {
@@ -686,7 +764,7 @@ fn smoke(output: PathBuf, job_id: String, windows: u32) -> Result<()> {
             missing_per_mille: 50,
             seed: 7,
         };
-        let train = synthetic_train_spec(ModelProfile::TinyCi, &generator, false, u64::MAX)?;
+        let train = synthetic_train_spec(ModelProfile::TinyCi, &generator, None, u64::MAX)?;
         let request = TrainingRequest::new_local(
             JobId::new(job_id)?,
             train,
@@ -745,13 +823,23 @@ async fn serve(bind: String, output: PathBuf) -> Result<()> {
     }
     #[cfg(all(feature = "server", any(feature = "cpu", feature = "cuda")))]
     {
+        let webhook_secret = std::env::var("RUVIEW_FAL_WEBHOOK_SECRET").context(
+            "RUVIEW_FAL_WEBHOOK_SECRET is required to bind requests to fal's routing layer",
+        )?;
+        if webhook_secret.is_empty() {
+            bail!("RUVIEW_FAL_WEBHOOK_SECRET must not be empty");
+        }
         let executor = Arc::new(BurnServerExecutor {
             artifacts: ArtifactStore::new(output)?,
         });
         let listener = tokio::net::TcpListener::bind(&bind)
             .await
             .context("bind Direct Server")?;
-        axum::serve(listener, ruforecast_train::server::router(executor)).await?;
+        axum::serve(
+            listener,
+            ruforecast_train::server::router(executor, webhook_secret),
+        )
+        .await?;
         Ok(())
     }
 }
@@ -784,7 +872,7 @@ impl ruforecast_train::server::SyntheticJobExecutor for BurnServerExecutor {
         let train = synthetic_train_spec(
             payload.model_profile,
             &generator,
-            false,
+            None,
             payload.expires_at_ms,
         )
         .map_err(|e| e.to_string())?;
@@ -884,8 +972,104 @@ async fn fal(command: FalCommand) -> Result<()> {
     #[cfg(feature = "fal-client")]
     {
         use ruforecast_train::fal::*;
-        let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
         match command {
+            FalCommand::Plan {
+                windows,
+                variates,
+                seed,
+                model_profile,
+                epochs,
+                batch_size,
+                learning_rate,
+                weight_decay,
+                gradient_clip_norm,
+                max_wall_time_seconds,
+                max_billable_seconds,
+                max_memory_bytes,
+                expires_in_seconds,
+                approval_id,
+                governance_policy,
+                governance_receipt,
+            } => {
+                let now = unix_ms();
+                let expires_at_ms = expires_in_seconds
+                    .checked_mul(1_000)
+                    .and_then(|duration| now.checked_add(duration))
+                    .context("hosted expiry overflow")?;
+                let generator = SyntheticDatasetSpec {
+                    windows,
+                    variates,
+                    missing_per_mille: 50,
+                    seed,
+                };
+                let model_profile = ModelProfile::from(model_profile);
+                let policy: DataPolicy = load_json(&governance_policy)?;
+                let signed_receipt: SignedFalGovernanceReceipt = load_json(&governance_receipt)?;
+                let verified = configured_fal_governance_verifier()?.verify(
+                    &signed_receipt,
+                    generator.canonical_digest(),
+                    configured_fal_schema_digest(),
+                    &SourceState::synthetic("ruview-coupled-generator-v1")?,
+                    &policy,
+                    policy.tenant_id(),
+                    policy.account_id(),
+                    policy.workspace_id(),
+                    now,
+                )?;
+                let train = synthetic_train_spec(
+                    model_profile,
+                    &generator,
+                    Some((&verified, &policy)),
+                    now.saturating_add(86_400_000),
+                )?;
+                let optimizer = OptimizerSpec {
+                    epochs,
+                    batch_size,
+                    learning_rate,
+                    weight_decay,
+                    gradient_clip_norm,
+                    checkpoint_every_epochs: epochs,
+                    seed: 11,
+                };
+                optimizer.validate()?;
+                let max_optimizer_steps = u64::from(windows)
+                    .div_ceil(u64::from(batch_size))
+                    .checked_mul(u64::from(epochs))
+                    .context("hosted optimizer-step count overflow")?;
+                let budget = HostedBudget {
+                    max_optimizer_steps,
+                    max_wall_time_seconds,
+                    max_billable_seconds,
+                    // A plan carries no spend approval yet; the real ceiling
+                    // is fixed by the operator when they sign the approval
+                    // for this digest, then re-declared (and re-checked) on
+                    // `fal submit`.
+                    max_micro_usd: 1,
+                    max_artifact_bytes: MAX_CUMULATIVE_ARTIFACT_BYTES,
+                    max_memory_bytes,
+                    cost_basis: HostedCostBasis::UnmeasuredOperatorCap,
+                };
+                let (worker_build_id, build_manifest_digest) = configured_worker_identity()?;
+                let request_digest = preview_request_digest(
+                    &train,
+                    &generator,
+                    model_profile,
+                    &optimizer,
+                    budget,
+                    worker_build_id,
+                    build_manifest_digest,
+                    expires_at_ms,
+                    &approval_id,
+                )?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "approval_id": approval_id,
+                        "request_digest": request_digest,
+                        "expires_at_ms": expires_at_ms,
+                    }))?
+                );
+            }
             FalCommand::Submit {
                 windows,
                 variates,
@@ -902,7 +1086,11 @@ async fn fal(command: FalCommand) -> Result<()> {
                 max_micro_usd,
                 ack_unenforced_provider_cost,
                 expires_in_seconds,
+                governance_policy,
+                governance_receipt,
+                spend_approval,
             } => {
+                let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
                 if !ack_unenforced_provider_cost {
                     bail!("hosted submit requires explicit acknowledgement of unenforced cost");
                 }
@@ -918,10 +1106,23 @@ async fn fal(command: FalCommand) -> Result<()> {
                     seed,
                 };
                 let model_profile = ModelProfile::from(model_profile);
+                let policy: DataPolicy = load_json(&governance_policy)?;
+                let signed_receipt: SignedFalGovernanceReceipt = load_json(&governance_receipt)?;
+                let verified = configured_fal_governance_verifier()?.verify(
+                    &signed_receipt,
+                    generator.canonical_digest(),
+                    configured_fal_schema_digest(),
+                    &SourceState::synthetic("ruview-coupled-generator-v1")?,
+                    &policy,
+                    policy.tenant_id(),
+                    policy.account_id(),
+                    policy.workspace_id(),
+                    now,
+                )?;
                 let train = synthetic_train_spec(
                     model_profile,
                     &generator,
-                    true,
+                    Some((&verified, &policy)),
                     now.saturating_add(86_400_000),
                 )?;
                 let optimizer = OptimizerSpec {
@@ -943,11 +1144,12 @@ async fn fal(command: FalCommand) -> Result<()> {
                     max_wall_time_seconds,
                     max_billable_seconds,
                     max_micro_usd,
-                    max_artifact_bytes: ruforecast_model::MAX_ARTIFACT_BYTES as u64,
+                    max_artifact_bytes: MAX_CUMULATIVE_ARTIFACT_BYTES,
                     max_memory_bytes,
                     cost_basis: HostedCostBasis::UnmeasuredOperatorCap,
                 };
                 let (worker_build_id, build_manifest_digest) = configured_worker_identity()?;
+                let signed_spend_approval: SignedSpendApproval = load_json(&spend_approval)?;
                 let plan = ReservedSyntheticSubmission::reserve(
                     &train,
                     &generator,
@@ -958,6 +1160,8 @@ async fn fal(command: FalCommand) -> Result<()> {
                     build_manifest_digest,
                     expires_at_ms,
                     now,
+                    &configured_spend_approval_verifier()?,
+                    &signed_spend_approval,
                 )?;
                 let client = FalQueueClient::new(key, configured_fal_app()?)?;
                 let handle = client.submit(&plan).await?;
@@ -970,6 +1174,7 @@ async fn fal(command: FalCommand) -> Result<()> {
                 artifacts_expire_at_ms,
                 max_artifact_bytes,
             } => {
+                let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
                 let c = FalQueueClient::new(key, configured_fal_app()?)?;
                 let h = fal_handle(
                     request_id,
@@ -987,6 +1192,7 @@ async fn fal(command: FalCommand) -> Result<()> {
                 artifacts_expire_at_ms,
                 max_artifact_bytes,
             } => {
+                let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
                 let c = FalQueueClient::new(key, configured_fal_app()?)?;
                 let h = fal_handle(
                     request_id,
@@ -1005,6 +1211,7 @@ async fn fal(command: FalCommand) -> Result<()> {
                 artifacts_expire_at_ms,
                 max_artifact_bytes,
             } => {
+                let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
                 let c = FalQueueClient::new(key, configured_fal_app()?)?;
                 let h = fal_handle(
                     request_id,
@@ -1023,6 +1230,7 @@ async fn fal(command: FalCommand) -> Result<()> {
                 max_artifact_bytes,
                 quarantine,
             } => {
+                let key = FalKey::new(std::env::var("FAL_KEY").context("FAL_KEY is required")?)?;
                 let c = FalQueueClient::new(key, configured_fal_app()?)?;
                 let h = fal_handle(
                     request_id,
@@ -1077,6 +1285,69 @@ fn configured_worker_identity() -> Result<(String, Sha256Digest)> {
         worker_build_id,
         Sha256Digest::from_hex(&build_manifest_sha256)?,
     ))
+}
+
+/// Loads and decodes a bounded JSON governance/approval artifact. These
+/// files carry no secrets (a receipt/approval is a signed authorization, not
+/// a key) but are still capped defensively.
+#[cfg(feature = "fal-client")]
+fn load_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    if bytes.len() > ruforecast_train::config::MAX_TRAINING_REQUEST_BYTES {
+        bail!("{} exceeds the maximum accepted size", path.display());
+    }
+    serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// Parses a comma-separated allowlist of hex-encoded Ed25519 public keys
+/// from an environment variable.
+#[cfg(feature = "fal-client")]
+fn configured_signer_allowlist(env_var: &str) -> Result<Vec<[u8; 32]>> {
+    let raw = std::env::var(env_var).with_context(|| format!("{env_var} is required"))?;
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let bytes = hex::decode(entry)
+                .with_context(|| format!("{env_var} contains a non-hex entry"))?;
+            <[u8; 32]>::try_from(bytes.as_slice())
+                .map_err(|_| anyhow::anyhow!("{env_var} entries must be 32-byte hex Ed25519 keys"))
+        })
+        .collect()
+}
+
+/// Operator-key verifier for governance receipts, configured from the
+/// `RUVIEW_FAL_GOVERNANCE_SIGNERS` allowlist (comma-separated hex Ed25519
+/// public keys).
+#[cfg(feature = "fal-client")]
+fn configured_fal_governance_verifier() -> Result<ruforecast_core::FalGovernanceVerifier> {
+    Ok(ruforecast_core::FalGovernanceVerifier::new(
+        configured_signer_allowlist("RUVIEW_FAL_GOVERNANCE_SIGNERS")?,
+    )?)
+}
+
+/// Operator-key verifier for spend approvals, configured from the
+/// `RUVIEW_FAL_SPEND_SIGNERS` allowlist (comma-separated hex Ed25519 public
+/// keys). Deliberately separate from the governance-receipt allowlist: a
+/// dataset/schema/recipe reviewer is not necessarily authorized to approve
+/// real spend.
+#[cfg(feature = "fal-client")]
+fn configured_spend_approval_verifier() -> Result<ruforecast_train::fal::SpendApprovalVerifier> {
+    Ok(ruforecast_train::fal::SpendApprovalVerifier::new(
+        configured_signer_allowlist("RUVIEW_FAL_SPEND_SIGNERS")?,
+    )?)
+}
+
+/// Fixed schema digest for the v1 synthetic-only fal path: no dataset
+/// schema is ever exported (only a recipe digest and seed are), so both the
+/// offline governance-receipt signing tool and this CLI must agree on one
+/// well-known placeholder rather than negotiate a real one.
+#[cfg(feature = "fal-client")]
+fn configured_fal_schema_digest() -> CanonicalDigest {
+    CanonicalDigest::of_bytes(
+        b"ruforecast-fal-synthetic-schema-v1",
+        b"synthetic-coupled-generator-v1",
+    )
 }
 
 fn verify_candidate(path: PathBuf) -> Result<()> {
@@ -1564,6 +1835,12 @@ mod tests {
             "2",
             "--batch-size",
             "2",
+            "--governance-policy",
+            "policy.json",
+            "--governance-receipt",
+            "receipt.json",
+            "--spend-approval",
+            "approval.json",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([

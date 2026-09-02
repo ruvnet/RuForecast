@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use ruforecast_core::{
     CanonicalDigest, DataPolicy, HoldoutKey, NormalizationPolicy, PrivacyClass, QuantileSet,
     SeriesKey, SourceState, SplitMember, SplitStrategy, TemporalSplitPlan, TimeRange, TrainSpec,
-    TrainingDestinationKind,
+    TrainingDestinationKind, VerifiedFalDataset,
 };
 use ruforecast_model::ForecastModelConfig;
 use serde::de::Error as _;
@@ -37,6 +37,15 @@ pub const MAX_LOCAL_VARIATES: u16 = 128;
 /// Preferred deterministic shuffle reservoir when the memory reservation can
 /// accommodate it.
 pub const DEFAULT_SHUFFLE_WINDOWS: usize = 64;
+/// Cumulative byte cap shared by the local and hosted artifact budgets. One
+/// completed run publishes up to four artifacts (model, manifest, receipt,
+/// checkpoint); each may independently approach
+/// [`ruforecast_model::MAX_ARTIFACT_BYTES`], so the cumulative budget allows
+/// up to four times that. The local and fal (`HostedBudget`) paths must
+/// enforce the same ceiling here so a legitimately-sized completed hosted
+/// run is never rejected after real GPU spend just because it used a
+/// stricter hosted-only cap.
+pub const MAX_CUMULATIVE_ARTIFACT_BYTES: u64 = ruforecast_model::MAX_ARTIFACT_BYTES as u64 * 4;
 
 /// Configuration validation failures.
 #[derive(Debug, Error)]
@@ -124,6 +133,22 @@ impl From<JobId> for String {
 }
 
 /// A path below the runner's configured dataset root.
+///
+/// This hand-rolls its own directory-traversal defense rather than reusing
+/// `wifi-densepose-sensing-server`'s audited `path_safety::safe_id` (added
+/// for issue #615), for two reasons. First, the standalone-repository
+/// boundary: `ruforecast-train` has no path dependency into RuView's `v2/`
+/// workspace (see the rationale on `ruforecast_core::SourceKind`), so
+/// depending on a RuView-internal crate here would need a cross-repository
+/// git dependency scoped and reviewed on its own. Second, even setting that
+/// aside, `safe_id` validates one *flat* identifier and explicitly rejects
+/// `/` -- it is not a fit for this type's actual contract, which is a
+/// bounded *multi-segment* relative dataset path (e.g.
+/// `corpus/room-1/session.jsonl`); adopting it as-is would remove needed
+/// functionality, not just deduplicate code. [`Self::new`] instead applies
+/// the equivalent defense-in-depth per path segment: reject empty/`.`/`..`
+/// segments, reject a leading `/` or embedded `\`/NUL, and independently
+/// re-check every [`std::path::Component`] is `Normal`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct RelativeDataPath(String);
@@ -189,6 +214,18 @@ impl From<RelativeDataPath> for String {
 }
 
 /// A fixed-size SHA-256 digest with canonical lower-case hex serialization.
+///
+/// Deliberately a distinct type from `ruforecast_core::CanonicalDigest`
+/// rather than the same type reused: `CanonicalDigest` is a domain-separated
+/// hash (a fixed per-purpose prefix is mixed into every digest, so e.g. a
+/// `TrainSpec` digest and a `DataPolicy` digest can never collide even over
+/// identical bytes) used for this crate family's own internal governed
+/// structures, while `Sha256Digest` hashes raw bytes for the fal.ai wire
+/// protocol (build manifests, job/request digests) where the value must
+/// match a plain `sha256sum` an external tool or operator computes over the
+/// same bytes -- domain-separating it would break that comparison. Both are
+/// hand-rolled 32-byte hex-serializing wrappers around `sha2::Sha256`
+/// because of that difference, not by oversight.
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Sha256Digest([u8; 32]);
 
@@ -511,9 +548,7 @@ impl TrainingBudget {
                 "max_memory_bytes must be between 256 MiB and 96 GiB",
             ));
         }
-        if !(1024 * 1024..=ruforecast_model::MAX_ARTIFACT_BYTES as u64 * 4)
-            .contains(&self.max_artifact_bytes)
-        {
+        if !(1024 * 1024..=MAX_CUMULATIVE_ARTIFACT_BYTES).contains(&self.max_artifact_bytes) {
             return Err(ConfigError::InvalidBudget("invalid max_artifact_bytes"));
         }
         if self.max_checkpoints != 1 {
@@ -859,10 +894,22 @@ impl LocalTrainingRequestWire {
 /// Builds the deterministic synthetic training contract used by smoke tests
 /// and by the hosted worker after decoding the redacted recipe. All identity
 /// strings are fixed synthetic namespaces and never originate from RuView.
+///
+/// `fal_verification` selects the destination: `None` builds a local-only
+/// contract with no export receipts (nothing leaves the operator's machine,
+/// so none are required); `Some((verified, policy))` builds a fal-destined
+/// contract bound to that exact operator-signed governance verification
+/// (ADR-349). There is no parameter combination here that reaches a
+/// fal-destined [`TrainSpec`] with a self-asserted, unverified policy: the
+/// caller's `policy` must carry real consent/DPA/export receipts, because
+/// `verified` could only have been minted by
+/// [`ruforecast_core::FalGovernanceVerifier::verify`], which already
+/// requires those receipts to be present for exactly this `policy` before it
+/// signs off.
 pub fn synthetic_train_spec(
     model_profile: ModelProfile,
     generator: &SyntheticDatasetSpec,
-    fal_destination: bool,
+    fal_verification: Option<(&VerifiedFalDataset, &DataPolicy)>,
     retention_until_ms: u64,
 ) -> Result<TrainSpec, ConfigError> {
     generator.validate()?;
@@ -893,51 +940,55 @@ pub fn synthetic_train_spec(
         0,
     )
     .map_err(|error| ConfigError::TrainSpec(error.to_string()))?;
-    let policy = DataPolicy::new(
-        PrivacyClass::P3,
-        "synthetic",
-        "synthetic",
-        "synthetic",
-        "forecast-foundation-pretraining",
-        CanonicalDigest::of_bytes(b"synthetic-policy-v1", b"approved"),
-        None,
-        None,
-        None,
-        retention_until_ms,
-        true,
-    )
-    .map_err(|error| ConfigError::TrainSpec(error.to_string()))?;
     let quantiles = QuantileSet::new(model.quantiles.to_vec())
         .map_err(|error| ConfigError::TrainSpec(error.to_string()))?;
-    if fal_destination {
-        let source = SourceState::synthetic("ruview-coupled-generator-v1")
+    match fal_verification {
+        Some((verified, policy)) => {
+            let source = SourceState::synthetic("ruview-coupled-generator-v1")
+                .map_err(|error| ConfigError::TrainSpec(error.to_string()))?;
+            TrainSpec::new_fal_synthetic(
+                model.context_len,
+                model.horizon,
+                1_000,
+                quantiles,
+                split,
+                NormalizationPolicy::None,
+                generator.canonical_digest(),
+                policy.clone(),
+                &source,
+                verified,
+                generator.canonical_digest(),
+                generator.seed,
+            )
+            .map_err(|error| ConfigError::TrainSpec(error.to_string()))
+        }
+        None => {
+            let policy = DataPolicy::new(
+                PrivacyClass::P3,
+                "synthetic",
+                "synthetic",
+                "synthetic",
+                "forecast-foundation-pretraining",
+                CanonicalDigest::of_bytes(b"synthetic-policy-v1", b"approved"),
+                None,
+                None,
+                None,
+                retention_until_ms,
+                true,
+            )
             .map_err(|error| ConfigError::TrainSpec(error.to_string()))?;
-        TrainSpec::new_fal_synthetic(
-            model.context_len,
-            model.horizon,
-            1_000,
-            quantiles,
-            split,
-            NormalizationPolicy::None,
-            generator.canonical_digest(),
-            policy,
-            &source,
-            generator.canonical_digest(),
-            generator.seed,
-        )
-        .map_err(|error| ConfigError::TrainSpec(error.to_string()))
-    } else {
-        TrainSpec::new_local(
-            model.context_len,
-            model.horizon,
-            1_000,
-            quantiles,
-            split,
-            NormalizationPolicy::None,
-            generator.canonical_digest(),
-            policy,
-        )
-        .map_err(|error| ConfigError::TrainSpec(error.to_string()))
+            TrainSpec::new_local(
+                model.context_len,
+                model.horizon,
+                1_000,
+                quantiles,
+                split,
+                NormalizationPolicy::None,
+                generator.canonical_digest(),
+                policy,
+            )
+            .map_err(|error| ConfigError::TrainSpec(error.to_string()))
+        }
     }
 }
 
@@ -1058,7 +1109,7 @@ mod tests {
             missing_per_mille: 50,
             seed: 7,
         };
-        let spec = synthetic_train_spec(ModelProfile::TinyCi, &generator, false, 86_400_000)
+        let spec = synthetic_train_spec(ModelProfile::TinyCi, &generator, None, 86_400_000)
             .expect("synthetic smoke contract");
         assert_eq!(spec.destination(), TrainingDestinationKind::Local);
     }
@@ -1129,7 +1180,7 @@ mod tests {
         let make = |batch_size| {
             TrainingRequest::new_local(
                 JobId::new(format!("large-batch-{batch_size}")).expect("job"),
-                synthetic_train_spec(ModelProfile::LargeLinux, &generator, false, u64::MAX)
+                synthetic_train_spec(ModelProfile::LargeLinux, &generator, None, u64::MAX)
                     .expect("train spec"),
                 DatasetSource::Synthetic(generator.clone()),
                 ModelProfile::LargeLinux,
