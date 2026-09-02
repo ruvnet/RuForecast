@@ -1156,6 +1156,53 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
   }
   scene.add(nodeMesh2);
 
+  // ---------- flickering mesh links: a handful of thin connecting lines between
+  //             nearby base positions (computed once), each in its own small
+  //             material group so groups can fade in/out on independent phases —
+  //             suggests a live sensing mesh rather than a static point cloud ----------
+  var LINK_GROUPS = isNarrow ? 2 : 4;
+  var LINKS_PER_GROUP = isNarrow ? 5 : 8;
+  var linkGroups = [];
+  (function buildLinks() {
+    var pool = nodeBase.concat(nodeBase2);
+    var linkRand = seeded(211);
+    for (var g = 0; g < LINK_GROUPS; g++) {
+      var positions = [];
+      for (var k = 0; k < LINKS_PER_GROUP; k++) {
+        var a = pool[Math.floor(linkRand() * pool.length)];
+        // find a reasonably nearby partner by sampling a few candidates and
+        // keeping the closest, rather than an expensive full nearest-neighbor scan
+        var best = null, bestD = Infinity;
+        for (var c = 0; c < 6; c++) {
+          var cand = pool[Math.floor(linkRand() * pool.length)];
+          if (cand === a) continue;
+          var dx = cand.x - a.x, dy = cand.y - a.y, dz = cand.z - a.z;
+          var d = dx * dx + dy * dy + dz * dz;
+          if (d < bestD) { bestD = d; best = cand; }
+        }
+        if (!best || bestD > 30) continue; // skip pairs too far apart to read as a "link"
+        positions.push(a.x, a.y, a.z, best.x, best.y, best.z);
+      }
+      if (!positions.length) continue;
+      var geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      var mat = new THREE.LineBasicMaterial({ color: palette.observed, transparent: true, opacity: 0 });
+      var lines = new THREE.LineSegments(geom, mat);
+      scene.add(lines);
+      linkGroups.push({ mesh: lines, mat: mat, phase: linkRand() * Math.PI * 2, speed: 0.35 + linkRand() * 0.3 });
+    }
+  })();
+
+  // ---------- a small traveling pulse: a bright point that runs the length of
+  //             the path on a slow loop, independent of scroll — reads as a
+  //             live signal moving through the mesh even while the reader holds
+  //             still. Kept singular/small so it never competes with content. ----------
+  var pulseGeom = new THREE.SphereGeometry(0.09, 10, 10);
+  var pulseMat = new THREE.MeshBasicMaterial({ color: palette.observed, transparent: true, opacity: 0.85 });
+  var pulseMesh = new THREE.Mesh(pulseGeom, pulseMat);
+  scene.add(pulseMesh);
+  var PULSE_PERIOD_MS = 26000;
+
   // ---------- sizing ----------
   function resize() {
     var w = window.innerWidth, h = window.innerHeight;
@@ -1196,34 +1243,81 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
     coreMat.color.set(palette.observed);
     nodeMat.color.set(palette.observed);
     nodeMat2.color.set(palette.forecast);
+    pulseMat.color.set(palette.observed);
+    linkGroups.forEach(function (g) { g.mat.color.set(palette.observed); });
   }
   applyPaletteToMaterials();
 
-  var t0 = 0;
+  var RIBBON_BASE_OPACITY = 0.14;
+  var CORE_BASE_OPACITY = 0.45;
+
   function animateNodes(elapsedMs) {
     var tt = elapsedMs * 0.0006;
     for (var i = 0; i < nodeBase.length; i++) {
       var b = nodeBase[i];
-      nodeDummy.position.set(b.x, b.y + Math.sin(tt + b.phase) * b.amp, b.z);
-      nodeDummy.scale.setScalar(0.6);
+      // elliptical drift (independent x/y frequencies per node via its own phase)
+      // plus a gentle scale pulse — cheap liveliness that doesn't read as a
+      // single rigid block moving in lockstep.
+      var driftY = Math.sin(tt + b.phase) * b.amp;
+      var driftX = Math.cos(tt * 0.63 + b.phase * 1.7) * b.amp * 0.35;
+      nodeDummy.position.set(b.x + driftX, b.y + driftY, b.z);
+      nodeDummy.scale.setScalar(0.6 + Math.sin(tt * 1.4 + b.phase * 2.3) * 0.18);
       nodeDummy.updateMatrix();
       nodeMesh.setMatrixAt(i, nodeDummy.matrix);
     }
     nodeMesh.instanceMatrix.needsUpdate = true;
     for (var i2 = 0; i2 < nodeBase2.length; i2++) {
       var b2 = nodeBase2[i2];
-      nodeDummy.position.set(b2.x, b2.y + Math.cos(tt * 0.8 + b2.phase) * b2.amp, b2.z);
-      nodeDummy.scale.setScalar(0.5);
+      var driftY2 = Math.cos(tt * 0.8 + b2.phase) * b2.amp;
+      var driftX2 = Math.sin(tt * 0.51 + b2.phase * 1.3) * b2.amp * 0.35;
+      nodeDummy.position.set(b2.x + driftX2, b2.y + driftY2, b2.z);
+      nodeDummy.scale.setScalar(0.5 + Math.cos(tt * 1.1 + b2.phase * 1.9) * 0.15);
       nodeDummy.updateMatrix();
       nodeMesh2.setMatrixAt(i2, nodeDummy.matrix);
     }
     nodeMesh2.instanceMatrix.needsUpdate = true;
   }
 
-  function renderFrame() {
+  // ribbon/core "breathing" — slow opacity drift so the observed-trace motif
+  // reads as a live signal even when the reader holds the page still, and a
+  // traveling pulse + flickering mesh links for the same reason.
+  function animateSignal(elapsedMs) {
+    var tt = elapsedMs * 0.001;
+    // kept small: the ribbon's base opacity/radius was deliberately tuned in a
+    // prior pass to avoid obscuring the architecture/governance diagrams at the
+    // fan-peak scroll zone — breathing must stay well inside that safety margin,
+    // not push toward it.
+    ribbonMat.opacity = RIBBON_BASE_OPACITY + Math.sin(tt * 0.5) * 0.018;
+    coreMat.opacity = CORE_BASE_OPACITY + Math.sin(tt * 0.9 + 1.1) * 0.06;
+
+    var pu = (elapsedMs % PULSE_PERIOD_MS) / PULSE_PERIOD_MS;
+    var pp = pathCurve.getPointAt(Math.min(0.999, pu));
+    pulseMesh.position.copy(pp);
+    // fade in/out at the very ends of the loop rather than popping
+    var edge = Math.min(pu, 1 - pu) * 14;
+    pulseMat.opacity = Math.max(0, Math.min(0.85, edge));
+
+    linkGroups.forEach(function (g) {
+      var v = (Math.sin(tt * g.speed + g.phase) + 1) * 0.5; // 0..1
+      g.mat.opacity = v * v * 0.32; // ease toward 0 so links spend more time faint than bright
+    });
+  }
+
+  // tiny camera "breathing" layered on top of the scroll-driven lerp target —
+  // amplitude kept small so it reads as alive, not seasick.
+  function cameraBreath(elapsedMs) {
+    var tt = elapsedMs * 0.00035;
+    return {
+      x: Math.sin(tt) * 0.16,
+      y: Math.cos(tt * 0.8) * 0.11
+    };
+  }
+
+  function renderFrame(elapsedMs) {
     camCurrent.lerp(camTarget, 0.06);
     lookCurrent.lerp(lookTarget, 0.06);
-    camera.position.copy(camCurrent);
+    var breath = typeof elapsedMs === "number" ? cameraBreath(elapsedMs) : { x: 0, y: 0 };
+    camera.position.set(camCurrent.x + breath.x, camCurrent.y + breath.y, camCurrent.z);
     camera.lookAt(lookCurrent);
     renderer.render(scene, camera);
   }
@@ -1233,7 +1327,9 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
   lookCurrent.copy(lookTarget);
 
   if (reduceMotion) {
-    // one static, well-composed frame — no RAF loop, no node drift
+    // one static, well-composed frame — no RAF loop, no node/signal drift,
+    // no camera breathing. Links/pulse stay at their build-time opacity (0),
+    // ribbon/core stay at their base opacity — nothing here moves.
     renderFrame();
   } else {
     var running = true;
@@ -1242,7 +1338,8 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
       if (!running) return;
       updateCameraTargets();
       animateNodes(now);
-      renderFrame();
+      animateSignal(now);
+      renderFrame(now);
       raf = requestAnimationFrame(loop);
     }
     document.addEventListener("visibilitychange", function () {
