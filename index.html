@@ -811,6 +811,39 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
 
         <p><strong>Signed verdict: REJECT.</strong> The first split nominally beat the baseline, but by less than the required non-inferiority margin — it doesn't clear the bar on its own terms. The second split lost outright. Same shape of result as every synthetic search on this page: a win on one split does not survive independent verification on another.</p>
         <p>This isn't evidence that real data can't help — it's evidence that 6,390 samples from one household is not yet enough to separate a genuine effect from split-dependent noise. Full numbers, both splits, and the signed rejection are recorded in <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/benchmarks/ruforecast.md">docs/benchmarks/ruforecast.md</a>.</p>
+
+        <h3 style="margin-top: 2rem;">Update: real public dataset, cross-entity holdout (2026-09-02) — same conclusion, on 53 different real people.</h3>
+        <p>Every real-data test above used one household with only a <em>temporal</em> holdout — same sensor, different time windows. This test is the first genuine <em>cross-entity</em> holdout: 53 real ICU patients from the <a href="https://physionet.org/content/bidmc/1.0.0/">BIDMC PPG and Respiration Dataset</a> (PhysioNet, Open Data Commons Attribution License v1.0, public and openly licensed), split by <em>patient</em> so the held-out test set contains real people the model never saw during training. 25,546 real 1&nbsp;Hz rows, heart rate + respiratory rate + SpO2; 3 of 53 patients excluded honestly for genuine sensor-dropout gaps in the source recordings, not fabricated.</p>
+
+        <div style="overflow-x: auto; margin: 1.2rem 0;">
+          <table style="width: 100%; min-width: 480px; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.85rem;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--panel-line);">
+                <th style="text-align: left; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">judge (real patient split)</th>
+                <th style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">model WQL</th>
+                <th style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">best baseline WQL</th>
+                <th style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">result</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid var(--panel-line);">
+                <td style="padding: 0.5rem 0.6rem; color: var(--text);">34 train / 16 test patients (contiguous split)</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.01964</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.01159</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--danger);">worse, +69%</td>
+              </tr>
+              <tr>
+                <td style="padding: 0.5rem 0.6rem; color: var(--text);">24 train / 26 test patients (interleaved split)</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.07022</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.01002</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--danger);">worse, +601%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Same conclusion, now on real, public, multi-subject clinical data with genuine cross-patient generalization.</strong> The margin is decisive on both independent splits, not a near-miss — the hypothesis that a larger, genuinely diverse real dataset (many different people, not one household) might change the picture does not hold at this model configuration either.</p>
+        <p style="color: var(--text-dim); font-size: 0.9rem;">Honest scope note: unlike the household-data entry above, this result was not additionally run through Autogenous's signed promotion path — it is real, independent, out-of-sample evidence (two disjoint real patient partitions), but without a cryptographically signed verdict. Full numbers and methodology recorded in <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/benchmarks/ruforecast.md">docs/benchmarks/ruforecast.md</a>.</p>
       </div>
     </section>
 
