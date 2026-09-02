@@ -775,9 +775,42 @@ cargo build --release -p ruforecast-train --features cpu,cli --bin ruforecast
 
         <ul>
           <li>This is reported here on purpose, not buried in an issue tracker — the project's standing rule is that every accuracy claim is tagged <strong>MEASURED</strong>, <strong>CLAIMED</strong>, or <strong>SYNTHETIC</strong>, and nothing is claimed as proven until it is.</li>
-          <li>The credible next lever is more real training data, not further search on a small synthetic fixture — that work is active.</li>
+          <li>The credible next lever was more real training data, not further search on a small synthetic fixture — that ran (see the real-data update below).</li>
           <li>Full evidence, both search rounds, and the retraction are recorded in <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/benchmarks/ruforecast.md"><code>docs/benchmarks/ruforecast.md</code></a>.</li>
         </ul>
+
+        <h3 style="margin-top: 2rem;">Update: real household data (2026-09-01) — same conclusion, now confirmed on real data too.</h3>
+        <p>The "more real training data" lever above is no longer just a plan — it ran. 6,390 real 1&nbsp;Hz vital-signs samples from a live household sensor (88.75% real coverage, gaps handled honestly, never fabricated) were split two genuinely independent ways and each independently, cryptographically verified through the real Autogenous regression-candidate promotion path — not self-reported.</p>
+
+        <div style="overflow-x: auto; margin: 1.2rem 0;">
+          <table style="width: 100%; min-width: 480px; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.85rem;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--panel-line);">
+                <th style="text-align: left; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">judge (real split)</th>
+                <th style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">model WQL</th>
+                <th style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">best baseline WQL</th>
+                <th style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text-dim); font-weight: 400;">margin vs. 0.01 bar</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid var(--panel-line);">
+                <td style="padding: 0.5rem 0.6rem; color: var(--text);">70% train / 90s embargo / 30% test (27 windows)</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.0514</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.0563</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--accent-observed);">+0.0049 — below margin, rejected</td>
+              </tr>
+              <tr>
+                <td style="padding: 0.5rem 0.6rem; color: var(--text);">50% train / 90s embargo / 50% test (46 windows)</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.0670</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--text);">0.0543</td>
+                <td style="text-align: right; padding: 0.5rem 0.6rem; color: var(--danger);">&minus;0.0128 — lost outright</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Signed verdict: REJECT.</strong> The first split nominally beat the baseline, but by less than the required non-inferiority margin — it doesn't clear the bar on its own terms. The second split lost outright. Same shape of result as every synthetic search on this page: a win on one split does not survive independent verification on another.</p>
+        <p>This isn't evidence that real data can't help — it's evidence that 6,390 samples from one household is not yet enough to separate a genuine effect from split-dependent noise. Full numbers, both splits, and the signed rejection are recorded in <a href="https://github.com/ruvnet/RuForecast/blob/main/docs/benchmarks/ruforecast.md">docs/benchmarks/ruforecast.md</a>.</p>
       </div>
     </section>
 
