@@ -483,7 +483,12 @@ fn synthetic_dataset_window(
     let mut targets = Vec::with_capacity(variates_usize * horizon);
     for variate in 0..variates_usize {
         for step in 0..horizon {
-            targets.push(synthetic_dataset_value(index, context_len + step, variate, salt));
+            targets.push(synthetic_dataset_value(
+                index,
+                context_len + step,
+                variate,
+                salt,
+            ));
         }
     }
     JsonlWindow {
@@ -558,8 +563,9 @@ fn prepare_synthetic_dataset(
         0,
     )?;
 
-    let feature_names: Vec<String> =
-        (0..usize::from(variates)).map(|index| format!("synthetic-{index}")).collect();
+    let feature_names: Vec<String> = (0..usize::from(variates))
+        .map(|index| format!("synthetic-{index}"))
+        .collect();
     let feature_schema_digest = CanonicalDigest::of_bytes(
         b"ruview-synthetic-dataset-feature-schema-v1",
         feature_names.join(",").as_bytes(),
@@ -813,9 +819,9 @@ impl ruforecast_train::server::SyntheticJobExecutor for BurnServerExecutor {
             },
         )
         .and_then(|request| {
-            request.bind_hosted_synthetic_execution(
-                ruforecast_core::CanonicalDigest::from_bytes(*request_digest.as_bytes()),
-            )
+            request.bind_hosted_synthetic_execution(ruforecast_core::CanonicalDigest::from_bytes(
+                *request_digest.as_bytes(),
+            ))
         })
         .and_then(|r| r.into_validated())
         .map_err(|e| e.to_string())?;
@@ -1113,7 +1119,8 @@ fn read_test_windows(path: &std::path::Path) -> Result<Vec<JsonlWindow>> {
     let reader = std::io::BufReader::new(file);
     let mut windows = Vec::new();
     for (line_index, line) in reader.lines().enumerate() {
-        let line = line.with_context(|| format!("reading line {} of {}", line_index + 1, path.display()))?;
+        let line =
+            line.with_context(|| format!("reading line {} of {}", line_index + 1, path.display()))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -1177,7 +1184,9 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
             .manifest()
             .feature_schema_digest;
         let runtime = activate_for_evaluation(&candidate_bytes, unix_ms(), declared_digest)
-            .context("activating candidate for local evaluation (self-signed, not a release signature)")?;
+            .context(
+                "activating candidate for local evaluation (self-signed, not a release signature)",
+            )?;
         let config = runtime.config().clone();
         let device = CpuDevice::default();
         let context_len = config.context_len;
@@ -1207,7 +1216,8 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
             }
         }
 
-        let feature_names: Vec<String> = (0..variates).map(|index| format!("eval-{index}")).collect();
+        let feature_names: Vec<String> =
+            (0..variates).map(|index| format!("eval-{index}")).collect();
         let schema = FeatureSchema::new(
             feature_names
                 .iter()
@@ -1291,7 +1301,11 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
 
         for window in &windows {
             total_context += window.observed_mask.len() as u64;
-            missing_context += window.observed_mask.iter().filter(|mask| **mask == 0).count() as u64;
+            missing_context += window
+                .observed_mask
+                .iter()
+                .filter(|mask| **mask == 0)
+                .count() as u64;
             total_target += window.target_mask.len() as u64;
             missing_target += window.target_mask.iter().filter(|mask| **mask == 0).count() as u64;
 
@@ -1308,7 +1322,9 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
                 &window.observed_mask,
             )
             .map_err(|error| anyhow::anyhow!("{error}"))?;
-            let output = runtime.predict(input).map_err(|error| anyhow::anyhow!("{error}"))?;
+            let output = runtime
+                .predict(input)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
             let quantile_values: Vec<f32> = output
                 .normalized_quantiles
                 .into_data()
@@ -1334,7 +1350,11 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
                         let predicted = quantile_values[base + quantile_index];
                         let residual = f64::from(actual) - f64::from(predicted);
                         let q = f64::from(*quantile);
-                        let pinball = if residual >= 0.0 { q * residual } else { (q - 1.0) * residual };
+                        let pinball = if residual >= 0.0 {
+                            q * residual
+                        } else {
+                            (q - 1.0) * residual
+                        };
                         window_loss += pinball;
                         by_horizon_loss[step] += pinball;
                     }
@@ -1345,7 +1365,9 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
                 }
             }
             if window_scale > 0.0 {
-                model_acc.wql.push(2.0 * window_loss / (nq as f64 * window_scale));
+                model_acc
+                    .wql
+                    .push(2.0 * window_loss / (nq as f64 * window_scale));
             }
             for step in 0..horizon {
                 if by_horizon_scale[step] > 0.0 {
@@ -1358,7 +1380,8 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
             let series_timestamps: Vec<u64> = (0..context_len)
                 .map(|row| window.context_start_ms + (row as u64) * 1_000)
                 .collect();
-            let series_mask: Vec<bool> = window.observed_mask.iter().map(|mask| *mask == 1).collect();
+            let series_mask: Vec<bool> =
+                window.observed_mask.iter().map(|mask| *mask == 1).collect();
             let series = TimeSeries::new(
                 schema.clone(),
                 series_timestamps,
@@ -1398,12 +1421,16 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
                 if let ForecastOutcome::Forecast(forecast) =
                     LastValueForecaster::new().forecast(&request)?
                 {
-                    last_value_acc
-                        .wql
-                        .push(weighted_quantile_loss(&actual_step_major, &observed_step_major, &forecast)?);
-                    if let Ok(by_horizon) =
-                        weighted_quantile_loss_by_horizon(&actual_step_major, &observed_step_major, &forecast)
-                    {
+                    last_value_acc.wql.push(weighted_quantile_loss(
+                        &actual_step_major,
+                        &observed_step_major,
+                        &forecast,
+                    )?);
+                    if let Ok(by_horizon) = weighted_quantile_loss_by_horizon(
+                        &actual_step_major,
+                        &observed_step_major,
+                        &forecast,
+                    ) {
                         for (step, value) in by_horizon.into_iter().enumerate() {
                             last_value_acc.wql_by_horizon[step].push(value);
                         }
@@ -1418,12 +1445,16 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
                     );
                 }
                 if let ForecastOutcome::Forecast(forecast) = seasonal.forecast(&request)? {
-                    seasonal_acc
-                        .wql
-                        .push(weighted_quantile_loss(&actual_step_major, &observed_step_major, &forecast)?);
-                    if let Ok(by_horizon) =
-                        weighted_quantile_loss_by_horizon(&actual_step_major, &observed_step_major, &forecast)
-                    {
+                    seasonal_acc.wql.push(weighted_quantile_loss(
+                        &actual_step_major,
+                        &observed_step_major,
+                        &forecast,
+                    )?);
+                    if let Ok(by_horizon) = weighted_quantile_loss_by_horizon(
+                        &actual_step_major,
+                        &observed_step_major,
+                        &forecast,
+                    ) {
                         for (step, value) in by_horizon.into_iter().enumerate() {
                             seasonal_acc.wql_by_horizon[step].push(value);
                         }

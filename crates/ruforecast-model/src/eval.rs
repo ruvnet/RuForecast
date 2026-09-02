@@ -39,9 +39,7 @@ pub fn activate_for_evaluation(
 ) -> Result<CpuForecastRuntime, ModelError> {
     let candidate = ModelArtifact::decode(candidate_bytes)?;
     let signing_key = SigningKey::from_bytes(&EVAL_ONLY_SEED);
-    let signature = signing_key
-        .sign(&candidate.signing_message()?)
-        .to_bytes();
+    let signature = signing_key.sign(&candidate.signing_message()?).to_bytes();
     let public_key = signing_key.verifying_key().to_bytes();
     let encoded = SignedModelArtifact::new(&candidate, public_key, signature)?.encode()?;
     let trusted = TrustedSignerSet::new(vec![public_key])?;
@@ -134,7 +132,10 @@ pub fn build_eval_input(
             TensorData::new(descriptors, [1, variates, config.descriptor_width]),
             device,
         ),
-        Tensor::from_data(TensorData::new(vec![1.0_f32; variates], [1, variates]), device),
+        Tensor::from_data(
+            TensorData::new(vec![1.0_f32; variates], [1, variates]),
+            device,
+        ),
     )
 }
 
@@ -162,7 +163,10 @@ mod tests {
             teacher_outputs_used: false,
             independently_implemented: true,
         };
-        ModelArtifact::new(manifest, weights).unwrap().encode().unwrap()
+        ModelArtifact::new(manifest, weights)
+            .unwrap()
+            .encode()
+            .unwrap()
     }
 
     #[test]

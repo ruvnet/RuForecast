@@ -102,7 +102,9 @@ fn evaluate_scores_a_smoke_trained_candidate_against_baselines() {
         assert!(wql.is_finite() && wql >= 0.0, "{forecaster} WQL was {wql}");
         let by_horizon = report[forecaster]["weighted_quantile_loss_by_horizon"]
             .as_array()
-            .unwrap_or_else(|| panic!("{forecaster} weighted_quantile_loss_by_horizon must be an array"));
+            .unwrap_or_else(|| {
+                panic!("{forecaster} weighted_quantile_loss_by_horizon must be an array")
+            });
         assert_eq!(by_horizon.len(), config.horizon);
     }
 

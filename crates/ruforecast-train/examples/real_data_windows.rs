@@ -18,8 +18,8 @@ use ruforecast_core::{
 };
 use ruforecast_model::ForecastModelConfig;
 use ruforecast_train::config::{
-    DatasetInput, DatasetSource, JobId, LocalTrainSpecWire, LocalTrainingRequestWire,
-    ModelProfile, OptimizerSpec, RelativeDataPath, Sha256Digest, TrainingBudget, TrainingDevice,
+    DatasetInput, DatasetSource, JobId, LocalTrainSpecWire, LocalTrainingRequestWire, ModelProfile,
+    OptimizerSpec, RelativeDataPath, Sha256Digest, TrainingBudget, TrainingDevice,
 };
 use ruforecast_train::corpus::JsonlWindow;
 
@@ -43,17 +43,33 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
         let v: serde_json::Value = serde_json::from_str(&line)?;
-        let ts = v["unix_ts"].as_u64().ok_or_else(|| anyhow::anyhow!("missing unix_ts"))?;
+        let ts = v["unix_ts"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("missing unix_ts"))?;
         let vs = &v["sample"]["vital_signs"];
-        let hr = vs["heart_rate_bpm"].as_f64().ok_or_else(|| anyhow::anyhow!("missing hr"))? as f32;
-        let br = vs["breathing_rate_bpm"].as_f64().ok_or_else(|| anyhow::anyhow!("missing br"))? as f32;
-        let sq = vs["signal_quality"].as_f64().ok_or_else(|| anyhow::anyhow!("missing sq"))? as f32;
+        let hr = vs["heart_rate_bpm"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("missing hr"))? as f32;
+        let br = vs["breathing_rate_bpm"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("missing br"))? as f32;
+        let sq = vs["signal_quality"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("missing sq"))? as f32;
         by_ts.insert(ts, [hr, br, sq]);
     }
-    let min_ts = *by_ts.keys().next().ok_or_else(|| anyhow::anyhow!("empty input"))?;
+    let min_ts = *by_ts
+        .keys()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("empty input"))?;
     let max_ts = *by_ts.keys().next_back().unwrap();
     let span = (max_ts - min_ts + 1) as usize;
-    println!("real samples: {} span_s: {} coverage: {:.4}", by_ts.len(), span, by_ts.len() as f64 / span as f64);
+    println!(
+        "real samples: {} span_s: {} coverage: {:.4}",
+        by_ts.len(),
+        span,
+        by_ts.len() as f64 / span as f64
+    );
 
     // Uniform 1s grid, real observed_mask where a real sample exists at that
     // second, zero-filled + mask=0 elsewhere (honest gap handling, not
@@ -78,7 +94,12 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("test region too small after embargo; reduce embargo or extend collection");
     }
 
-    let build_windows = |region_start: usize, region_end: usize, room: &str, device: &str, idx_offset: u64| -> Vec<(SeriesKey, JsonlWindow)> {
+    let build_windows = |region_start: usize,
+                         region_end: usize,
+                         room: &str,
+                         device: &str,
+                         idx_offset: u64|
+     -> Vec<(SeriesKey, JsonlWindow)> {
         let mut out = Vec::new();
         let mut pos = region_start;
         let mut i = 0u64;
@@ -122,27 +143,46 @@ fn main() -> anyhow::Result<()> {
     };
 
     let train_windows = build_windows(0, train_end, "real-home-lab-train", "esp32-cohen-train", 0);
-    let test_windows = build_windows(test_start, span, "real-home-lab-test", "esp32-cohen-test", 10_000);
-    println!("train windows: {} test windows: {} embargo_s: {}", train_windows.len(), test_windows.len(), embargo_s);
+    let test_windows = build_windows(
+        test_start,
+        span,
+        "real-home-lab-test",
+        "esp32-cohen-test",
+        10_000,
+    );
+    println!(
+        "train windows: {} test windows: {} embargo_s: {}",
+        train_windows.len(),
+        test_windows.len(),
+        embargo_s
+    );
     if train_windows.is_empty() || test_windows.is_empty() {
         anyhow::bail!("empty train or test window set");
     }
 
-    let train_lines: Vec<String> = train_windows.iter().map(|(_, w)| serde_json::to_string(w).unwrap()).collect();
+    let train_lines: Vec<String> = train_windows
+        .iter()
+        .map(|(_, w)| serde_json::to_string(w).unwrap())
+        .collect();
     let mut shard = train_lines.join("\n").into_bytes();
     shard.push(b'\n');
     std::fs::write(out_dir.join("train.jsonl"), &shard)?;
     let sha256 = Sha256Digest::of_bytes(&shard);
 
-    let test_lines: Vec<String> = test_windows.iter().map(|(_, w)| serde_json::to_string(w).unwrap()).collect();
+    let test_lines: Vec<String> = test_windows
+        .iter()
+        .map(|(_, w)| serde_json::to_string(w).unwrap())
+        .collect();
     let mut test_shard = test_lines.join("\n").into_bytes();
     test_shard.push(b'\n');
     std::fs::write(out_dir.join("test.jsonl"), &test_shard)?;
 
-    let train_members: Vec<SplitMember> = train_windows.iter()
+    let train_members: Vec<SplitMember> = train_windows
+        .iter()
         .map(|(k, _)| SplitMember::new(k.clone(), TimeRange::new(1, u64::MAX / 2).unwrap()))
         .collect();
-    let test_members: Vec<SplitMember> = test_windows.iter()
+    let test_members: Vec<SplitMember> = test_windows
+        .iter()
         .map(|(k, _)| SplitMember::new(k.clone(), TimeRange::new(1, u64::MAX / 2).unwrap()))
         .collect();
     let split_plan = TemporalSplitPlan::new(
@@ -191,7 +231,10 @@ fn main() -> anyhow::Result<()> {
             quantiles: QuantileSet::new(model.quantiles.to_vec())?,
             split_plan,
             normalization: NormalizationPolicy::None,
-            dataset_digest: CanonicalDigest::of_bytes(b"ruview-jsonl-window-shard-v1", sha256.as_bytes()),
+            dataset_digest: CanonicalDigest::of_bytes(
+                b"ruview-jsonl-window-shard-v1",
+                sha256.as_bytes(),
+            ),
             policy,
         },
         dataset: DatasetSource::Manifest(DatasetInput {
@@ -223,7 +266,10 @@ fn main() -> anyhow::Result<()> {
     };
     let request_bytes = toml::to_string_pretty(&request)?.into_bytes();
     std::fs::write(out_dir.join("train-local.toml"), &request_bytes)?;
-    println!("wrote real train-local.toml, train.jsonl, test.jsonl to {}", out_dir.display());
+    println!(
+        "wrote real train-local.toml, train.jsonl, test.jsonl to {}",
+        out_dir.display()
+    );
     Ok(())
 }
 

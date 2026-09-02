@@ -287,8 +287,8 @@ mod tests {
             SourceState::claimed("fixture").unwrap(),
         )
         .unwrap();
-        let source = SourceState::derived_forecast("fixture", series.source(), artifact.source())
-            .unwrap();
+        let source =
+            SourceState::derived_forecast("fixture", series.source(), artifact.source()).unwrap();
         let mut values = Vec::with_capacity(horizon * variates * quantiles.len());
         for step in 0..horizon {
             for variate in 0..variates {

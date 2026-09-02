@@ -10,13 +10,13 @@
 
 use std::{collections::BTreeMap, mem::size_of, path::Path, sync::Mutex};
 
-use ruvector_core::{
-    types::{DbOptions, DistanceMetric, HnswConfig, SearchQuery, VectorEntry},
-    VectorDB,
-};
 use ruforecast_core::{
     AnalogMatch, AnalogQuery, AnalogRetriever, CanonicalDigest, ForecastError, RetrievalScope,
     MAX_ANALOG_DIMENSION, MAX_ANALOG_K, MAX_SERIES_VALUES,
+};
+use ruvector_core::{
+    types::{DbOptions, DistanceMetric, HnswConfig, SearchQuery, VectorEntry},
+    VectorDB,
 };
 use tempfile::{Builder, NamedTempFile, TempDir};
 
