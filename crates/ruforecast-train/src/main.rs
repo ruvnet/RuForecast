@@ -1380,47 +1380,63 @@ fn evaluate(candidate: PathBuf, test_jsonl: PathBuf, seasonal_period: usize) -> 
                 }
             }
 
-            if let ForecastOutcome::Forecast(forecast) =
-                LastValueForecaster::new().forecast(&request)?
-            {
-                last_value_acc
-                    .wql
-                    .push(weighted_quantile_loss(&actual_step_major, &observed_step_major, &forecast)?);
-                for (step, value) in
-                    weighted_quantile_loss_by_horizon(&actual_step_major, &observed_step_major, &forecast)?
-                        .into_iter()
-                        .enumerate()
+            // A real (non-synthetic) window can have zero observed targets
+            // purely from real sensor-poll gaps; skip that window's baseline
+            // scoring rather than erroring the whole evaluate run, matching
+            // the model loop's own graceful window_scale>0.0 skip above.
+            // A real (non-synthetic) window can have zero observed targets
+            // overall, or zero observed cells within one specific horizon
+            // step (real per-second gaps apply uniformly across variates),
+            // purely from real sensor-poll gaps. weighted_quantile_loss only
+            // needs one observed cell anywhere in the window; the by-horizon
+            // breakdown needs every step individually observed and errors
+            // otherwise -- treat that as "this window cannot contribute a
+            // by-horizon breakdown", not as a fatal run error, matching the
+            // model loop's own graceful per-window/per-step skip above.
+            let any_target_observed = observed_step_major.iter().any(|observed| *observed);
+            if any_target_observed {
+                if let ForecastOutcome::Forecast(forecast) =
+                    LastValueForecaster::new().forecast(&request)?
                 {
-                    last_value_acc.wql_by_horizon[step].push(value);
+                    last_value_acc
+                        .wql
+                        .push(weighted_quantile_loss(&actual_step_major, &observed_step_major, &forecast)?);
+                    if let Ok(by_horizon) =
+                        weighted_quantile_loss_by_horizon(&actual_step_major, &observed_step_major, &forecast)
+                    {
+                        for (step, value) in by_horizon.into_iter().enumerate() {
+                            last_value_acc.wql_by_horizon[step].push(value);
+                        }
+                    }
+                    last_value_acc.push_bounds_from_forecast(
+                        &forecast,
+                        &actual_step_major,
+                        &observed_step_major,
+                        variates,
+                        lower_index,
+                        upper_index,
+                    );
                 }
-                last_value_acc.push_bounds_from_forecast(
-                    &forecast,
-                    &actual_step_major,
-                    &observed_step_major,
-                    variates,
-                    lower_index,
-                    upper_index,
-                );
-            }
-            if let ForecastOutcome::Forecast(forecast) = seasonal.forecast(&request)? {
-                seasonal_acc
-                    .wql
-                    .push(weighted_quantile_loss(&actual_step_major, &observed_step_major, &forecast)?);
-                for (step, value) in
-                    weighted_quantile_loss_by_horizon(&actual_step_major, &observed_step_major, &forecast)?
-                        .into_iter()
-                        .enumerate()
-                {
-                    seasonal_acc.wql_by_horizon[step].push(value);
+                if let ForecastOutcome::Forecast(forecast) = seasonal.forecast(&request)? {
+                    seasonal_acc
+                        .wql
+                        .push(weighted_quantile_loss(&actual_step_major, &observed_step_major, &forecast)?);
+                    if let Ok(by_horizon) =
+                        weighted_quantile_loss_by_horizon(&actual_step_major, &observed_step_major, &forecast)
+                    {
+                        for (step, value) in by_horizon.into_iter().enumerate() {
+                            seasonal_acc.wql_by_horizon[step].push(value);
+                        }
+                    }
+                    seasonal_acc.push_bounds_from_forecast(
+                        &forecast,
+                        &actual_step_major,
+                        &observed_step_major,
+                        variates,
+                        lower_index,
+                        upper_index,
+                    );
                 }
-                seasonal_acc.push_bounds_from_forecast(
-                    &forecast,
-                    &actual_step_major,
-                    &observed_step_major,
-                    variates,
-                    lower_index,
-                    upper_index,
-                );
             }
         }
 
