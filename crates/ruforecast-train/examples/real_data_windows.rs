@@ -110,8 +110,8 @@ fn main() -> anyhow::Result<()> {
             for row in 0..context_len {
                 let g = grid[pos + row];
                 let m = mask[pos + row];
-                for v in 0..VARIATES {
-                    values.push(g[v]);
+                for &value in g.iter().take(VARIATES) {
+                    values.push(value);
                     observed_mask.push(u8::from(m));
                 }
             }
