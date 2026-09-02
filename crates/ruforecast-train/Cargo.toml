@@ -12,6 +12,10 @@ name = "ruforecast"
 path = "src/main.rs"
 required-features = ["cli"]
 
+[[example]]
+name = "real_data_windows"
+required-features = ["cli"]
+
 [features]
 default = []
 cli = ["dep:anyhow", "dep:clap", "dep:tokio", "dep:tracing-subscriber"]
