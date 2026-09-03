@@ -1,5 +1,6 @@
 //! Closed-origin fal.ai queue client for synthetic-only pretraining.
 
+use ed25519_dalek::{Signature, VerifyingKey};
 use reqwest::{
     header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE},
     Client, Request, StatusCode,
@@ -21,7 +22,8 @@ use crate::{
     artifact::{ArtifactDescriptor, ArtifactError, ArtifactKind, ArtifactStore, FAL_ARTIFACT_ROOT},
     config::{
         JobId, ModelProfile, OptimizerSpec, Sha256Digest, SyntheticDatasetSpec,
-        MAX_OPTIMIZER_STEPS, MAX_TRAINING_REQUEST_BYTES, MAX_WALL_TIME_SECONDS,
+        MAX_CUMULATIVE_ARTIFACT_BYTES, MAX_OPTIMIZER_STEPS, MAX_TRAINING_REQUEST_BYTES,
+        MAX_WALL_TIME_SECONDS,
     },
 };
 
@@ -341,7 +343,7 @@ impl HostedSyntheticPayload {
             || b.max_billable_seconds > MAX_FAL_JOB_BUDGET_SECONDS
             || b.max_micro_usd == 0
             || b.max_artifact_bytes == 0
-            || b.max_artifact_bytes > ruforecast_model::MAX_ARTIFACT_BYTES as u64
+            || b.max_artifact_bytes > MAX_CUMULATIVE_ARTIFACT_BYTES
             || !(256 * 1024 * 1024..=96 * 1024 * 1024 * 1024).contains(&b.max_memory_bytes)
         {
             return Err(FalError::InvalidHostedPlan("budget"));
@@ -369,13 +371,192 @@ impl HostedSyntheticPayload {
     }
 }
 
+/// Minimum entropy required for a [`SpendApprovalClaims::approval_id`]. It
+/// seeds the request's `job_digest`, replacing an internally-random UUID, so
+/// it must carry comparable entropy to the 122-bit UUID v4 it replaces; 22
+/// bytes of safe-segment text comfortably clears that for an
+/// operator-generated random token.
+const MIN_SPEND_APPROVAL_ID_LEN: usize = 22;
+const MAX_SPEND_APPROVAL_VALIDITY_MS: u64 = 24 * 60 * 60 * 1_000;
+
+/// Canonical claims for an explicit local spend approval (ADR-349): an
+/// operator signs off on the exact fal request digest and the maximum
+/// micro-USD ceiling before [`ReservedSyntheticSubmission::reserve`] is
+/// allowed to build that request. Before this fix, `HostedBudget` -- and its
+/// `max_micro_usd` ceiling in particular -- was a purely self-asserted field
+/// on the submitting caller's own request; nothing checked it was ever
+/// actually approved by an operator, even though real GPU spend follows.
+///
+/// `approval_id` also seeds the request's `job_digest` (replacing an
+/// internally-random UUID). That determinism is what lets an operator
+/// compute the exact `request_digest` offline, ahead of the real
+/// submission, and sign off on it: see [`preview_request_digest`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpendApprovalClaims {
+    approval_id: String,
+    request_digest: Sha256Digest,
+    max_micro_usd: u64,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+}
+
+impl SpendApprovalClaims {
+    /// Construct claims for an operator-side signing tool.
+    pub fn new(
+        approval_id: impl Into<String>,
+        request_digest: Sha256Digest,
+        max_micro_usd: u64,
+        issued_at_ms: u64,
+        expires_at_ms: u64,
+    ) -> Result<Self, FalError> {
+        let approval_id = approval_id.into();
+        if approval_id.len() < MIN_SPEND_APPROVAL_ID_LEN || !safe_segment(&approval_id, 128) {
+            return Err(FalError::InvalidHostedPlan("spend approval id"));
+        }
+        if max_micro_usd == 0 {
+            return Err(FalError::InvalidHostedPlan("spend approval ceiling"));
+        }
+        if issued_at_ms >= expires_at_ms
+            || expires_at_ms - issued_at_ms > MAX_SPEND_APPROVAL_VALIDITY_MS
+        {
+            return Err(FalError::InvalidHostedPlan("spend approval validity"));
+        }
+        Ok(Self {
+            approval_id,
+            request_digest,
+            max_micro_usd,
+            issued_at_ms,
+            expires_at_ms,
+        })
+    }
+
+    /// Deterministic bytes signed by the operator key.
+    fn signing_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(160);
+        out.extend_from_slice(b"ruforecast-fal-spend-approval-v1\0");
+        out.extend_from_slice(&(self.approval_id.len() as u64).to_be_bytes());
+        out.extend_from_slice(self.approval_id.as_bytes());
+        out.extend_from_slice(self.request_digest.as_bytes());
+        out.extend_from_slice(&self.max_micro_usd.to_be_bytes());
+        out.extend_from_slice(&self.issued_at_ms.to_be_bytes());
+        out.extend_from_slice(&self.expires_at_ms.to_be_bytes());
+        out
+    }
+}
+
+/// Untrusted signed spend-approval envelope. Verification is mandatory.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedSpendApproval {
+    claims: SpendApprovalClaims,
+    signer_public_key: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+impl SignedSpendApproval {
+    /// Construct an untrusted envelope from exact Ed25519 bytes.
+    pub fn new(
+        claims: SpendApprovalClaims,
+        signer_public_key: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<Self, FalError> {
+        if signer_public_key.len() != 32 || signature.len() != 64 {
+            return Err(FalError::InvalidHostedPlan("spend approval signature"));
+        }
+        Ok(Self {
+            claims,
+            signer_public_key,
+            signature,
+        })
+    }
+}
+
+/// Operator-key verifier for [`SignedSpendApproval`]. Keys are validated and
+/// fixed at construction, mirroring
+/// [`ruforecast_core::FalGovernanceVerifier`]. Unlike that verifier, no
+/// single-use tracking is needed here: `request_digest` is itself already
+/// unique per submission (it transitively depends on `approval_id`, which
+/// [`SpendApprovalClaims::new`] requires to be fresh and high-entropy), so a
+/// captured approval cannot be replayed against a different request and
+/// replaying it against the same request only re-authorizes a submission
+/// that never happened the first time.
+pub struct SpendApprovalVerifier {
+    allowed_public_keys: Vec<[u8; 32]>,
+}
+
+impl SpendApprovalVerifier {
+    /// Configure a non-empty operator signer allowlist.
+    pub fn new(allowed_public_keys: Vec<[u8; 32]>) -> Result<Self, FalError> {
+        if allowed_public_keys.is_empty() {
+            return Err(FalError::InvalidHostedPlan("spend approval allowlist"));
+        }
+        for (index, key) in allowed_public_keys.iter().enumerate() {
+            if allowed_public_keys[..index].contains(key) {
+                return Err(FalError::InvalidHostedPlan("spend approval allowlist"));
+            }
+            VerifyingKey::from_bytes(key)
+                .map_err(|_| FalError::InvalidHostedPlan("spend approval allowlist"))?;
+        }
+        Ok(Self {
+            allowed_public_keys,
+        })
+    }
+
+    /// Verify signature, authority, exact request digest, and that the
+    /// approved ceiling covers the requested budget.
+    fn verify(
+        &self,
+        signed: &SignedSpendApproval,
+        request_digest: Sha256Digest,
+        required_max_micro_usd: u64,
+        now_ms: u64,
+    ) -> Result<(), FalError> {
+        let signer: [u8; 32] = signed
+            .signer_public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| FalError::InvalidHostedPlan("spend approval signature"))?;
+        if !self.allowed_public_keys.contains(&signer) {
+            return Err(FalError::InvalidHostedPlan("spend approval signer"));
+        }
+        let key = VerifyingKey::from_bytes(&signer)
+            .map_err(|_| FalError::InvalidHostedPlan("spend approval signature"))?;
+        let signature_bytes: [u8; 64] = signed
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| FalError::InvalidHostedPlan("spend approval signature"))?;
+        let signature = Signature::from_bytes(&signature_bytes);
+        key.verify_strict(&signed.claims.signing_bytes(), &signature)
+            .map_err(|_| FalError::InvalidHostedPlan("spend approval signature"))?;
+        let claims = &signed.claims;
+        if claims.request_digest != request_digest {
+            return Err(FalError::InvalidHostedPlan("spend approval request digest"));
+        }
+        if claims.max_micro_usd < required_max_micro_usd {
+            return Err(FalError::InvalidHostedPlan("spend approval ceiling"));
+        }
+        if now_ms == 0 || now_ms < claims.issued_at_ms || now_ms >= claims.expires_at_ms {
+            return Err(FalError::InvalidHostedPlan(
+                "spend approval not currently valid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn job_digest_from_approval_id(approval_id: &str) -> Sha256Digest {
+    Sha256Digest::of_bytes(format!("ruforecast-fal-job-v1\0{approval_id}").as_bytes())
+}
+
 /// Non-serializable just-in-time reservation.
 #[derive(Debug)]
 pub struct ReservedSyntheticSubmission {
     payload: HostedSyntheticPayload,
 }
 impl ReservedSyntheticSubmission {
-    /// Builds a redacted plan from a core-validated synthetic fal TrainSpec.
+    /// Builds a redacted plan from a core-validated synthetic fal TrainSpec,
+    /// requiring an operator-signed [`SignedSpendApproval`] bound to the
+    /// exact resulting request digest and covering `budget.max_micro_usd`.
     #[allow(clippy::too_many_arguments)]
     pub fn reserve(
         train: &TrainSpec,
@@ -387,53 +568,28 @@ impl ReservedSyntheticSubmission {
         build_manifest_digest: Sha256Digest,
         expires_at_ms: u64,
         now_ms: u64,
+        spend_approval_verifier: &SpendApprovalVerifier,
+        spend_approval: &SignedSpendApproval,
     ) -> Result<Self, FalError> {
-        let contract = train
-            .require_fal_synthetic_contract()
-            .map_err(|_| FalError::InvalidHostedPlan("local-only TrainSpec"))?;
-        if contract.generator_recipe_digest() != generator.canonical_digest()
-            || contract.generator_seed() != generator.seed
-            || train.dataset_digest() != generator.canonical_digest()
-        {
-            return Err(FalError::InvalidHostedPlan("TrainSpec recipe"));
-        }
-        let config = model_profile.config();
-        if train.context_length() != config.context_len
-            || train.horizon() != config.horizon
-            || train.quantiles().values() != config.quantiles
-            || usize::from(generator.variates) > config.max_variates
-        {
-            return Err(FalError::InvalidHostedPlan("model profile"));
-        }
-        if now_ms == 0 || expires_at_ms <= now_ms {
-            return Err(FalError::InvalidHostedPlan("expired reservation"));
-        }
-        if expires_at_ms > train.policy().retention_until_ms() {
-            return Err(FalError::InvalidHostedPlan(
-                "reservation exceeds TrainSpec retention",
-            ));
-        }
-        let mut payload = HostedSyntheticPayload {
-            version: 1,
-            // A fresh random hosted namespace prevents low-entropy local job
-            // identifiers from crossing the provider boundary.
-            job_digest: Sha256Digest::of_bytes(uuid::Uuid::new_v4().as_bytes()),
-            request_digest: Sha256Digest::of_bytes(b"placeholder"),
+        let max_micro_usd = budget.max_micro_usd;
+        let payload = build_hosted_payload(
+            train,
+            generator,
             model_profile,
-            generator_profile: HostedGeneratorProfile::RuViewCoupledV1,
-            generator_recipe_digest: generator.canonical_digest(),
-            windows: generator.windows,
-            variates: generator.variates,
-            missing_per_mille: generator.missing_per_mille,
-            generator_seed: generator.seed,
-            optimizer: HostedOptimizer::from(optimizer),
+            optimizer,
             budget,
             worker_build_id,
             build_manifest_digest,
             expires_at_ms,
-        };
-        payload.request_digest = payload_digest(&payload);
+            &spend_approval.claims.approval_id,
+        )?;
         payload.validate_at(now_ms)?;
+        spend_approval_verifier.verify(
+            spend_approval,
+            payload.request_digest,
+            max_micro_usd,
+            now_ms,
+        )?;
         Ok(Self { payload })
     }
     fn reverify(&self, now_ms: u64) -> Result<&HostedSyntheticPayload, FalError> {
@@ -441,6 +597,98 @@ impl ReservedSyntheticSubmission {
         Ok(&self.payload)
     }
 }
+
+/// Deterministically reconstructs the exact `request_digest`
+/// [`ReservedSyntheticSubmission::reserve`] will compute for these inputs
+/// and `approval_id`, without requiring a currently-valid clock reading. An
+/// offline approval tool calls this to know exactly what it is signing
+/// before minting a [`SignedSpendApproval`].
+#[allow(clippy::too_many_arguments)]
+pub fn preview_request_digest(
+    train: &TrainSpec,
+    generator: &SyntheticDatasetSpec,
+    model_profile: ModelProfile,
+    optimizer: &OptimizerSpec,
+    budget: HostedBudget,
+    worker_build_id: String,
+    build_manifest_digest: Sha256Digest,
+    expires_at_ms: u64,
+    approval_id: &str,
+) -> Result<Sha256Digest, FalError> {
+    let payload = build_hosted_payload(
+        train,
+        generator,
+        model_profile,
+        optimizer,
+        budget,
+        worker_build_id,
+        build_manifest_digest,
+        expires_at_ms,
+        approval_id,
+    )?;
+    Ok(payload.request_digest)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_hosted_payload(
+    train: &TrainSpec,
+    generator: &SyntheticDatasetSpec,
+    model_profile: ModelProfile,
+    optimizer: &OptimizerSpec,
+    budget: HostedBudget,
+    worker_build_id: String,
+    build_manifest_digest: Sha256Digest,
+    expires_at_ms: u64,
+    approval_id: &str,
+) -> Result<HostedSyntheticPayload, FalError> {
+    let contract = train
+        .require_fal_synthetic_contract()
+        .map_err(|_| FalError::InvalidHostedPlan("local-only TrainSpec"))?;
+    if contract.generator_recipe_digest() != generator.canonical_digest()
+        || contract.generator_seed() != generator.seed
+        || train.dataset_digest() != generator.canonical_digest()
+    {
+        return Err(FalError::InvalidHostedPlan("TrainSpec recipe"));
+    }
+    let config = model_profile.config();
+    if train.context_length() != config.context_len
+        || train.horizon() != config.horizon
+        || train.quantiles().values() != config.quantiles
+        || usize::from(generator.variates) > config.max_variates
+    {
+        return Err(FalError::InvalidHostedPlan("model profile"));
+    }
+    if expires_at_ms > train.policy().retention_until_ms() {
+        return Err(FalError::InvalidHostedPlan(
+            "reservation exceeds TrainSpec retention",
+        ));
+    }
+    let mut payload = HostedSyntheticPayload {
+        version: 1,
+        // Deterministically derived from the operator-approved
+        // `approval_id` instead of a fresh random UUID, so an offline
+        // approval tool can reproduce this exact digest before signing.
+        // `approval_id` itself supplies the entropy that keeps the hosted
+        // job namespace from correlating with low-entropy local job ids.
+        job_digest: job_digest_from_approval_id(approval_id),
+        request_digest: Sha256Digest::of_bytes(b"placeholder"),
+        model_profile,
+        generator_profile: HostedGeneratorProfile::RuViewCoupledV1,
+        generator_recipe_digest: generator.canonical_digest(),
+        windows: generator.windows,
+        variates: generator.variates,
+        missing_per_mille: generator.missing_per_mille,
+        generator_seed: generator.seed,
+        optimizer: HostedOptimizer::from(optimizer),
+        budget,
+        worker_build_id,
+        build_manifest_digest,
+        expires_at_ms,
+    };
+    payload.request_digest = payload_digest(&payload);
+    Ok(payload)
+}
+
 fn payload_digest(payload: &HostedSyntheticPayload) -> Sha256Digest {
     let mut clone = payload.clone();
     clone.request_digest = Sha256Digest::of_bytes(b"placeholder");
@@ -562,9 +810,7 @@ impl FalRequestHandle {
     }
 
     fn require_artifact_budget(&self, outcome: &HostedTrainingOutcome) -> Result<(), FalError> {
-        if self.max_artifact_bytes == 0
-            || self.max_artifact_bytes > ruforecast_model::MAX_ARTIFACT_BYTES as u64
-        {
+        if self.max_artifact_bytes == 0 || self.max_artifact_bytes > MAX_CUMULATIVE_ARTIFACT_BYTES {
             return Err(FalError::InvalidResponse);
         }
         let total = outcome
@@ -1272,6 +1518,24 @@ mod tests {
     use super::*;
     use crate::artifact::{ArtifactId, ArtifactKind};
     use crate::config::{synthetic_train_spec, JobId};
+    use ed25519_dalek::{Signer, SigningKey};
+    use ruforecast_core::{
+        DataPolicy, FalGovernanceClaims, FalGovernanceVerifier, PrivacyClass,
+        SignedFalGovernanceReceipt, SourceState, VerifiedFalDataset,
+    };
+
+    const TEST_SPEND_APPROVAL_ID: &str = "test-spend-approval-0000001";
+
+    /// A fresh, unique approval id per call -- mirroring what a real
+    /// operator approval ceremony must mint for every submission, and
+    /// needed so `job_digest` (deterministically derived from it) differs
+    /// across reservations the way an unpredictable hosted namespace must.
+    fn fresh_test_approval_id() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("test-spend-approval-{n:016x}")
+    }
 
     fn hosted_budget() -> HostedBudget {
         HostedBudget {
@@ -1285,6 +1549,106 @@ mod tests {
         }
     }
 
+    /// A policy carrying the real consent/DPA/export receipts governance
+    /// verification requires. `synthetic_train_spec`'s local-only branch
+    /// still builds a separate, receipt-free policy internally: that is
+    /// fine, since nothing there is exported.
+    fn test_fal_policy(retention_until_ms: u64) -> DataPolicy {
+        DataPolicy::new(
+            PrivacyClass::P3,
+            "synthetic",
+            "synthetic",
+            "synthetic",
+            "forecast-foundation-pretraining",
+            CanonicalDigest::of_bytes(b"synthetic-policy-v1", b"approved"),
+            None,
+            Some(CanonicalDigest::of_bytes(b"test-dpa", b"dpa")),
+            Some(CanonicalDigest::of_bytes(b"test-export", b"export")),
+            retention_until_ms,
+            true,
+        )
+        .unwrap()
+    }
+
+    /// Mints a real [`VerifiedFalDataset`] the way an operator governance
+    /// authority would, for the exact dataset/recipe/seed a
+    /// `SyntheticDatasetSpec` produces.
+    fn test_verified_dataset(
+        policy: &DataPolicy,
+        generator: &SyntheticDatasetSpec,
+        now: u64,
+    ) -> VerifiedFalDataset {
+        let source = SourceState::synthetic("ruview-coupled-generator-v1").unwrap();
+        let dataset_digest = generator.canonical_digest();
+        let schema_digest = CanonicalDigest::of_bytes(b"fal-test-schema-v1", b"n/a");
+        let claims = FalGovernanceClaims::new(
+            "test-governance-approval-1",
+            dataset_digest,
+            schema_digest,
+            &source,
+            policy,
+            dataset_digest,
+            generator.seed,
+            now.saturating_sub(1_000),
+            (now + 3_600_000).min(policy.retention_until_ms()),
+        )
+        .unwrap();
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let signature = key.sign(claims.signing_digest().as_bytes());
+        let signed = SignedFalGovernanceReceipt::new(
+            claims,
+            key.verifying_key().to_bytes().to_vec(),
+            signature.to_bytes().to_vec(),
+        )
+        .unwrap();
+        let verifier = FalGovernanceVerifier::new(vec![key.verifying_key().to_bytes()]).unwrap();
+        verifier
+            .verify(
+                &signed,
+                dataset_digest,
+                schema_digest,
+                &source,
+                policy,
+                policy.tenant_id(),
+                policy.account_id(),
+                policy.workspace_id(),
+                now,
+            )
+            .unwrap()
+    }
+
+    fn spend_approval_verifier() -> SpendApprovalVerifier {
+        SpendApprovalVerifier::new(vec![spend_signing_key().verifying_key().to_bytes()]).unwrap()
+    }
+
+    fn spend_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[9_u8; 32])
+    }
+
+    fn signed_spend_approval(
+        approval_id: &str,
+        request_digest: Sha256Digest,
+        max_micro_usd: u64,
+        now: u64,
+    ) -> SignedSpendApproval {
+        let claims = SpendApprovalClaims::new(
+            approval_id,
+            request_digest,
+            max_micro_usd,
+            now.saturating_sub(1_000),
+            now + 3_600_000,
+        )
+        .unwrap();
+        let key = spend_signing_key();
+        let signature = key.sign(&claims.signing_bytes());
+        SignedSpendApproval::new(
+            claims,
+            key.verifying_key().to_bytes().to_vec(),
+            signature.to_bytes().to_vec(),
+        )
+        .unwrap()
+    }
+
     fn reserved(now: u64) -> ReservedSyntheticSubmission {
         let generator = SyntheticDatasetSpec {
             windows: 1,
@@ -1292,8 +1656,16 @@ mod tests {
             missing_per_mille: 0,
             seed: 7,
         };
-        let train = synthetic_train_spec(ModelProfile::TinyCi, &generator, true, now + 3_000_000)
-            .expect("synthetic fal spec");
+        let expires_at_ms = now + 3_000_000;
+        let policy = test_fal_policy(u64::MAX);
+        let verified = test_verified_dataset(&policy, &generator, now);
+        let train = synthetic_train_spec(
+            ModelProfile::TinyCi,
+            &generator,
+            Some((&verified, &policy)),
+            expires_at_ms,
+        )
+        .expect("synthetic fal spec");
         let optimizer = OptimizerSpec {
             epochs: 1,
             batch_size: 1,
@@ -1303,6 +1675,25 @@ mod tests {
             checkpoint_every_epochs: 1,
             seed: 9,
         };
+        let approval_id = fresh_test_approval_id();
+        let request_digest = preview_request_digest(
+            &train,
+            &generator,
+            ModelProfile::TinyCi,
+            &optimizer,
+            hosted_budget(),
+            "worker-test".to_string(),
+            Sha256Digest::of_bytes(b"build"),
+            expires_at_ms,
+            &approval_id,
+        )
+        .expect("preview digest");
+        let spend_approval = signed_spend_approval(
+            &approval_id,
+            request_digest,
+            hosted_budget().max_micro_usd,
+            now,
+        );
         ReservedSyntheticSubmission::reserve(
             &train,
             &generator,
@@ -1311,8 +1702,10 @@ mod tests {
             hosted_budget(),
             "worker-test".to_string(),
             Sha256Digest::of_bytes(b"build"),
-            now + 3_000_000,
+            expires_at_ms,
             now,
+            &spend_approval_verifier(),
+            &spend_approval,
         )
         .expect("reservation")
     }
@@ -1458,9 +1851,20 @@ mod tests {
             missing_per_mille: 0,
             seed: 7,
         };
-        let train =
-            synthetic_train_spec(ModelProfile::TinyCi, &generator, true, retention_until_ms)
-                .expect("synthetic fal spec");
+        // The policy's own retention -- not the `retention_until_ms` argument
+        // to `synthetic_train_spec`, which only applies to its local-only
+        // branch -- is what a fal-destined TrainSpec is actually bound to,
+        // since it must match what the operator's governance receipt
+        // approved.
+        let policy = test_fal_policy(retention_until_ms);
+        let verified = test_verified_dataset(&policy, &generator, now);
+        let train = synthetic_train_spec(
+            ModelProfile::TinyCi,
+            &generator,
+            Some((&verified, &policy)),
+            retention_until_ms,
+        )
+        .expect("synthetic fal spec");
         let optimizer = OptimizerSpec {
             epochs: 1,
             batch_size: 1,
@@ -1470,7 +1874,25 @@ mod tests {
             checkpoint_every_epochs: 1,
             seed: 9,
         };
+        let verifier = spend_approval_verifier();
         let reserve = |expires_at_ms| {
+            let request_digest = preview_request_digest(
+                &train,
+                &generator,
+                ModelProfile::TinyCi,
+                &optimizer,
+                hosted_budget(),
+                "worker-test".to_string(),
+                Sha256Digest::of_bytes(b"build"),
+                expires_at_ms,
+                TEST_SPEND_APPROVAL_ID,
+            )?;
+            let spend_approval = signed_spend_approval(
+                TEST_SPEND_APPROVAL_ID,
+                request_digest,
+                hosted_budget().max_micro_usd,
+                now,
+            );
             ReservedSyntheticSubmission::reserve(
                 &train,
                 &generator,
@@ -1481,6 +1903,8 @@ mod tests {
                 Sha256Digest::of_bytes(b"build"),
                 expires_at_ms,
                 now,
+                &verifier,
+                &spend_approval,
             )
         };
 

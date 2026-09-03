@@ -190,6 +190,17 @@ pub enum ForecastError {
     #[error("governance signer allowlist must not be empty")]
     EmptySignerAllowlist,
 
+    /// A governance receipt id was presented to `verify` more than once.
+    #[error("fal governance receipt {receipt_id} has already been used")]
+    ReceiptReplayed {
+        /// The reused receipt identifier.
+        receipt_id: String,
+    },
+
+    /// The in-memory single-use receipt guard reached capacity.
+    #[error("fal governance receipt replay guard is at capacity")]
+    GovernanceReplayGuardExhausted,
+
     /// A derived output attempted to claim stronger evidence than its inputs.
     #[error("output evidence {output:?} exceeds allowed floor {allowed:?}")]
     EvidenceEscalation {

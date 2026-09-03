@@ -5,10 +5,16 @@ use crate::series::{validate_text, MAX_SOURCE_REFERENCE_LEN};
 use crate::{CanonicalDigest, ForecastError, SourceKind, SourceState};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeSet;
+use std::sync::Mutex;
 
 const MAX_SECURITY_ID_LEN: usize = 128;
 const MAX_GOVERNANCE_VALIDITY_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const MAX_CLOCK_SKEW_MS: u64 = 5 * 60 * 1_000;
+/// Bound on the in-memory single-use receipt-id guard. A verifier that would
+/// exceed this must be recycled by its long-lived host process; this crate
+/// intentionally has no clock or storage of its own to expire old entries.
+const MAX_TRACKED_RECEIPTS: usize = 100_000;
 
 /// ADR-260 semantic privacy class.
 ///
@@ -513,8 +519,14 @@ impl<'de> Deserialize<'de> for SignedFalGovernanceReceipt {
 }
 
 /// Operator-key verifier. Keys are validated and fixed at construction.
+///
+/// Holds an in-memory record of every `receipt_id` it has successfully
+/// verified, so a captured valid signed receipt cannot be replayed. Callers
+/// that need this guarantee across a process restart must persist and
+/// pre-seed that state themselves; this crate deliberately has no I/O.
 pub struct FalGovernanceVerifier {
     allowed_public_keys: Vec<[u8; 32]>,
+    used_receipt_ids: Mutex<BTreeSet<String>>,
 }
 
 impl FalGovernanceVerifier {
@@ -538,6 +550,7 @@ impl FalGovernanceVerifier {
         }
         Ok(Self {
             allowed_public_keys,
+            used_receipt_ids: Mutex::new(BTreeSet::new()),
         })
     }
 
@@ -614,6 +627,26 @@ impl FalGovernanceVerifier {
                 reason: "signed authorization is not currently valid",
             });
         }
+        // Every other check above is deterministic given the same inputs, so
+        // run the single-use guard last: a caller retrying a rejected
+        // request (wrong schema, wrong principal, ...) must not burn the
+        // receipt, only a request that actually passes every other check
+        // does.
+        {
+            let mut used = self
+                .used_receipt_ids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !used.contains(&claims.receipt_id) && used.len() >= MAX_TRACKED_RECEIPTS {
+                return Err(ForecastError::GovernanceReplayGuardExhausted);
+            }
+            if !used.insert(claims.receipt_id.clone()) {
+                return Err(ForecastError::ReceiptReplayed {
+                    receipt_id: claims.receipt_id.clone(),
+                });
+            }
+        }
+
         let mut receipt_writer = CanonicalWriter::new(b"signed-fal-governance-receipt-v1");
         receipt_writer.digest(claims.signing_digest());
         receipt_writer.bytes(&signer);
@@ -928,6 +961,78 @@ mod tests {
             verified.reverify_submission_context("tenant", "account", "workspace", 1_000),
             Err(ForecastError::PrivacyDenied { .. })
         ));
+    }
+
+    #[test]
+    fn verified_receipt_cannot_be_replayed() {
+        let source = SourceState::synthetic("generator").unwrap();
+        let policy = policy(PrivacyClass::P1, true, false);
+        let (_key, signed) = signed_receipt(&source, &policy);
+        let verifier = FalGovernanceVerifier::new(vec![_key.verifying_key().to_bytes()]).unwrap();
+        verifier
+            .verify(
+                &signed,
+                digest(b"data"),
+                digest(b"schema"),
+                &source,
+                &policy,
+                "tenant",
+                "account",
+                "workspace",
+                500,
+            )
+            .unwrap();
+        assert_eq!(
+            verifier.verify(
+                &signed,
+                digest(b"data"),
+                digest(b"schema"),
+                &source,
+                &policy,
+                "tenant",
+                "account",
+                "workspace",
+                600,
+            ),
+            Err(ForecastError::ReceiptReplayed {
+                receipt_id: "approval-1".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn rejected_verification_does_not_burn_the_receipt() {
+        let source = SourceState::synthetic("generator").unwrap();
+        let policy = policy(PrivacyClass::P1, true, false);
+        let (key, signed) = signed_receipt(&source, &policy);
+        let verifier = FalGovernanceVerifier::new(vec![key.verifying_key().to_bytes()]).unwrap();
+        assert!(matches!(
+            verifier.verify(
+                &signed,
+                digest(b"data"),
+                digest(b"wrong-schema"),
+                &source,
+                &policy,
+                "tenant",
+                "account",
+                "workspace",
+                500,
+            ),
+            Err(ForecastError::DigestMismatch { .. })
+        ));
+        assert!(verifier
+            .verify(
+                &signed,
+                digest(b"data"),
+                digest(b"schema"),
+                &source,
+                &policy,
+                "tenant",
+                "account",
+                "workspace",
+                500,
+            )
+            .is_ok());
     }
 
     #[test]

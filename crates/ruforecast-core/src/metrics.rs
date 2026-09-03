@@ -1,6 +1,6 @@
 //! Deterministic, allocation-free forecast metrics.
 
-use crate::series::{check_finite, check_shape};
+use crate::series::{check_finite_observed, check_shape};
 use crate::{Forecast, ForecastError};
 
 /// Mean absolute error over observed targets.
@@ -66,7 +66,7 @@ pub fn weighted_quantile_loss(
             })?;
     check_shape("metric_actual", expected, actual.len())?;
     check_shape("metric_observed", expected, observed.len())?;
-    check_finite("metric_actual", actual)?;
+    check_finite_observed("metric_actual", actual, observed)?;
     let mut loss = 0.0_f64;
     let mut scale = 0.0_f64;
     let mut observed_count = 0_u64;
@@ -123,7 +123,7 @@ pub fn weighted_quantile_loss_by_horizon(
         })?;
     check_shape("metric_actual", expected, actual.len())?;
     check_shape("metric_observed", expected, observed.len())?;
-    check_finite("metric_actual", actual)?;
+    check_finite_observed("metric_actual", actual, observed)?;
     let mut loss = vec![0.0_f64; horizon];
     let mut scale = vec![0.0_f64; horizon];
     let mut observed_count = vec![0_u64; horizon];
@@ -174,19 +174,20 @@ pub fn interval_coverage(
     check_shape("metric_lower", actual.len(), lower.len())?;
     check_shape("metric_upper", actual.len(), upper.len())?;
     check_shape("metric_observed", actual.len(), observed.len())?;
-    check_finite("metric_actual", actual)?;
-    check_finite("metric_lower", lower)?;
-    check_finite("metric_upper", upper)?;
+    check_finite_observed("metric_actual", actual, observed)?;
+    check_finite_observed("metric_lower", lower, observed)?;
+    check_finite_observed("metric_upper", upper, observed)?;
     let mut covered = 0_u64;
     let mut count = 0_u64;
     for index in 0..actual.len() {
+        if !observed[index] {
+            continue;
+        }
         if lower[index] > upper[index] {
             return Err(ForecastError::QuantileCrossing { index });
         }
-        if observed[index] {
-            count += 1;
-            covered += u64::from(actual[index] >= lower[index] && actual[index] <= upper[index]);
-        }
+        count += 1;
+        covered += u64::from(actual[index] >= lower[index] && actual[index] <= upper[index]);
     }
     divide_observed(covered as f64, count)
 }
@@ -198,8 +199,8 @@ fn validate_metric_arrays(
 ) -> Result<(), ForecastError> {
     check_shape("metric_predicted", actual.len(), predicted.len())?;
     check_shape("metric_observed", actual.len(), observed.len())?;
-    check_finite("metric_actual", actual)?;
-    check_finite("metric_predicted", predicted)?;
+    check_finite_observed("metric_actual", actual, observed)?;
+    check_finite_observed("metric_predicted", predicted, observed)?;
     Ok(())
 }
 
@@ -232,6 +233,22 @@ mod tests {
         assert!(matches!(
             interval_coverage(&[1.0], &[0.0], &[2.0], &[false]),
             Err(ForecastError::NoObservedTargets)
+        ));
+    }
+
+    #[test]
+    fn nonfinite_and_crossed_values_at_unobserved_cells_do_not_abort_metrics() {
+        // Real WiFi CSI data has normal per-cell dropout; a NaN or a crossed
+        // lower/upper pair sitting in an already-unobserved slot must not
+        // abort an otherwise well-formed metric call.
+        let actual = [1.0, f32::NAN];
+        let predicted = [2.0, f32::NAN];
+        let mask = [true, false];
+        assert_eq!(mae(&actual, &predicted, &mask).unwrap(), 1.0);
+        assert_eq!(pinball_loss(&actual, &predicted, &mask, 0.5).unwrap(), 0.5);
+        assert!(matches!(
+            interval_coverage(&[1.0, f32::NAN], &[0.0, 5.0], &[2.0, 0.0], &mask),
+            Ok(coverage) if coverage == 1.0
         ));
     }
 

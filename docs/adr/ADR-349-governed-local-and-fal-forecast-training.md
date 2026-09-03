@@ -8,6 +8,10 @@
 - **Parent**: ADR-348
 - **Extends**: ADR-010, ADR-145, ADR-298, ADR-319, ADR-348
 - **Supersedes**: None
+- **Amended by**: [ADR-350](./ADR-350-fal-governance-and-spend-enforcement.md) —
+  a code review found this ADR's governance-verification and
+  spend-approval-record requirements (below) were specified but not actually
+  enforced by the code that shipped in the same PR; ADR-350 records the fix.
 
 ## Decision
 

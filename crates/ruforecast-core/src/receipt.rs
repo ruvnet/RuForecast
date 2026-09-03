@@ -10,6 +10,21 @@ const MAX_MODEL_ID_LEN: usize = 256;
 const MAX_MODEL_VERSION_LEN: usize = 128;
 
 /// Evidence class ordered from weakest to strongest.
+///
+/// This intentionally reimplements the same "floor = minimum, never
+/// upgrade" invariant as RuView's `ruview-evidence::ProvenanceClass` /
+/// `EvidenceLevel`, rather than depending on that crate. `ruforecast-core`
+/// is a standalone, independently versioned repository
+/// (`github.com/ruvnet/RuForecast`, vendored into RuView as a git
+/// submodule) with no path dependency on RuView's `v2/` workspace; taking a
+/// dependency on `ruview-evidence` would require either publishing it
+/// separately (RuView's crates are not yet cleanly publishable to
+/// crates.io -- see issue #1334) or pulling it in as a cross-repository git
+/// dependency, which is a real option but needs its own versioning and
+/// security review rather than being folded into this fix batch. If
+/// `ruforecast-core` is ever pulled back in-tree, or `ruview-evidence`
+/// becomes independently consumable, this enum should be replaced by that
+/// one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SourceKind {

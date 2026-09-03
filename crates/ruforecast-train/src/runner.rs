@@ -226,6 +226,22 @@ impl BurnTrainer {
             return Ok(None);
         }
         if present != 4 {
+            // A cooperatively-cancelled run commits exactly one artifact --
+            // the model-only checkpoint -- and nothing else (see the
+            // cancellation branches in `train_backend`). That specific
+            // shape is a safe, expected "fresh start" case, not corruption:
+            // clear the stale checkpoint and let a retry train from
+            // scratch. Any other partial combination (e.g. a candidate with
+            // no receipt) is not a shape this trainer ever produces on its
+            // own and stays a hard failure.
+            if candidate.is_none()
+                && manifest.is_none()
+                && receipt.is_none()
+                && checkpoint.is_some()
+            {
+                self.artifacts.remove_job_outputs(job_id)?;
+                return Ok(None);
+            }
             return Err(TrainingError::Recovery("partial artifact set"));
         }
         let candidate = candidate.ok_or(TrainingError::Recovery("missing candidate"))?;
@@ -1170,7 +1186,7 @@ mod tests {
         };
         let retention_until_ms = unix_time_millis().saturating_add(30_000);
         let train =
-            synthetic_train_spec(ModelProfile::TinyCi, &generator, false, retention_until_ms)
+            synthetic_train_spec(ModelProfile::TinyCi, &generator, None, retention_until_ms)
                 .expect("synthetic contract");
         let request = TrainingRequest::new_local(
             JobId::new("expired-policy").expect("job"),
@@ -1212,7 +1228,7 @@ mod tests {
             missing_per_mille: 0,
             seed: 7,
         };
-        let train = synthetic_train_spec(ModelProfile::TinyCi, &generator, false, u64::MAX)
+        let train = synthetic_train_spec(ModelProfile::TinyCi, &generator, None, u64::MAX)
             .expect("synthetic contract");
         let request = TrainingRequest::new_local(
             JobId::new("publication-rollback").expect("job"),
@@ -1255,5 +1271,71 @@ mod tests {
                 .expect("post-rollback lookup")
                 .is_none());
         }
+    }
+
+    #[test]
+    fn cancelled_only_checkpoint_recovers_as_a_fresh_start() {
+        // A cooperatively-cancelled run leaves exactly a Checkpoint (see the
+        // cancellation branches in `train_backend`): no Model, Manifest, or
+        // Receipt. That specific shape must not permanently wedge a retry of
+        // the same job id.
+        let generator = SyntheticDatasetSpec {
+            windows: 2,
+            variates: 3,
+            missing_per_mille: 0,
+            seed: 7,
+        };
+        let train = synthetic_train_spec(ModelProfile::TinyCi, &generator, None, u64::MAX)
+            .expect("synthetic contract");
+        let request = TrainingRequest::new_local(
+            JobId::new("cancelled-then-retried").expect("job"),
+            train,
+            DatasetSource::Synthetic(generator),
+            ModelProfile::TinyCi,
+            TrainingDevice::Cpu,
+            OptimizerSpec {
+                epochs: 1,
+                batch_size: 2,
+                learning_rate: 1e-3,
+                weight_decay: 1e-4,
+                gradient_clip_norm: 1.0,
+                checkpoint_every_epochs: 1,
+                seed: 11,
+            },
+            TrainingBudget {
+                max_optimizer_steps: 1,
+                max_wall_time_seconds: 60,
+                max_memory_bytes: 1024 * 1024 * 1024,
+                max_artifact_bytes: 64 * 1024 * 1024,
+                max_checkpoints: 1,
+            },
+        )
+        .and_then(TrainingRequest::into_validated)
+        .expect("validated request");
+        let output = tempfile::tempdir().expect("artifact root");
+        let store = ArtifactStore::new(output.path()).expect("store");
+        store
+            .commit_bytes(
+                &request.get().job_id,
+                ArtifactKind::Checkpoint,
+                b"orphaned checkpoint bytes from a cancelled run",
+            )
+            .expect("simulate a cancelled run's checkpoint-only commit");
+
+        let trainer = BurnTrainer::new(store.clone());
+        let recovered = trainer
+            .recover_existing(&request)
+            .expect("recover_existing");
+        assert!(
+            recovered.is_none(),
+            "a checkpoint-only state must recover as a fresh start, not as a completed outcome"
+        );
+        assert!(
+            store
+                .existing_descriptor(&request.get().job_id, ArtifactKind::Checkpoint)
+                .expect("post-recovery lookup")
+                .is_none(),
+            "the stale checkpoint must be cleared so a retry's own commit cannot conflict with it"
+        );
     }
 }

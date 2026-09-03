@@ -3954,6 +3954,7 @@ dependencies = [
  "burn-optim",
  "clap",
  "criterion",
+ "ed25519-dalek",
  "hex",
  "http-body-util",
  "reqwest",
@@ -3971,7 +3972,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
 ]
 
 [[package]]
